@@ -98,6 +98,45 @@
 	pinctrl-names = "default";
 };
 
+&cbus {
+	dvb: dvb@5800 {
+		/* DVB demux + AsyncFIFO */
+		compatible = "amlogic,gxbb-dvb";
+
+		reg = <0x0 0x5800 0x0 0x400>,
+		      <0x0 0xa000 0x0 0x100>;
+		reg-names = "ts", "async-fifo";
+
+		interrupts = <GIC_SPI 23 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 24 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 25 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 26 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 27 IRQ_TYPE_EDGE_RISING>;
+
+		clocks = <&clkc CLKID_DEMUX>;
+		clock-names = "demux";
+
+		status = "disabled";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&dvb_p_ts0_pins>;
+
+		amlogic,num-filters = <32>;
+		ts0-control = <0>;
+
+		dvb-frontends = <&frontend0>;
+
+		tsin@0 {
+			reg = <0>;
+			amlogic,ts-bus-width = <8>;
+			status = "okay";
+		};
+	};
+};
+
 &ethmac {
 	status = "okay";
 	pinctrl-0 = <&eth_rmii_pins>;
@@ -123,6 +162,41 @@
 
 &ir {
 	linux,rc-map-name = "rc-videostrong-kii-pro";
+};
+
+&i2c_A {
+	status = "okay";
+	pinctrl-0 = <&i2c_a_pins>;
+	pinctrl-names = "default";
+	clock-frequency = <100000>;
+	clocks = <&clkc CLKID_I2C>;
+
+	frontend0: dvb-frontend@14 {
+		compatible = "availink,avl6862";
+		reg = <0x14>;
+		status = "okay";
+
+		reset-gpios = <&gpio GPIOY_13 GPIO_ACTIVE_LOW>;
+		power-gpios = <&gpio GPIOY_11 GPIO_ACTIVE_LOW>;
+
+		ts-source = <0>;
+		ts-port = <0>;
+		ts-serial = <0>;
+
+		tuner-compatible = "rafael,r912";
+		tuner-i2c-addr = <0x7a>;
+
+		power-off-delay-ms = <100>;
+		power-on-delay-ms = <300>;
+		reset-assert-ms = <600>;
+		reset-release-ms = <500>;
+	};
+};
+
+&i2c_B {
+	status = "okay";
+	pinctrl-0 = <&i2c_b_pins>;
+	pinctrl-names = "default";
 };
 
 &uart_A {
