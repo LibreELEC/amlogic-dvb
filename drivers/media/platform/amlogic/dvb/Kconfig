@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config DVB_AMLOGIC
+	tristate "Amlogic DVB/TS Demultiplexer"
+	depends on DVB_CORE && OF && HAS_DMA
+	select REGMAP_MMIO
+        help
+          Amlogic DVB/TS hardware demultiplexer driver for 'Meson' SoC
+          family devices, e.g. GXBB/GXL/GXM/G12A/G12B/SM1. Supports
+	  hardware PID filtering, section DMA, and DVR recording.
+
+          To compile as a module, say M.
