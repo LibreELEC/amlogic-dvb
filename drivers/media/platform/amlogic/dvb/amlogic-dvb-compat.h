@@ -5,12 +5,12 @@
 #include <media/dvbdev.h>
 
 static inline int aml_dvb_register_adapter(struct dvb_adapter *adap,
-                                           const char *name,
-                                           struct module *module,
-                                           struct device *dev,
-                                           short *adapter_nr)
+					   const char *name,
+					   struct module *module,
+					   struct device *dev,
+					   short *adapter_nr)
 {
-    return dvb_register_adapter(adap, name, module, dev, adapter_nr);
+	return dvb_register_adapter(adap, name, module, dev, adapter_nr);
 }
 
 #endif

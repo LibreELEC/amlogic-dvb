@@ -45,9 +45,11 @@ static int aml_dvb_caps_show(struct seq_file *s, void *unused)
 	seq_printf(s, "PID filters: %d\n", caps->num_pid_filters);
 	seq_printf(s, "Section filters: %d\n", caps->num_sec_filters);
 	seq_printf(s, "Async FIFOs: %d\n", caps->num_asyncfifo);
-	seq_printf(s, "Descrambler: %s\n", caps->has_descrambler ? "Yes" : "No");
+	seq_printf(s, "Descrambler: %s\n",
+		   caps->has_descrambler ? "Yes" : "No");
 	seq_printf(s, "CI+: %s\n", caps->has_ciplus ? "Yes" : "No");
-	seq_printf(s, "Hardware filtering: %s\n", caps->has_hwfilter ? "Yes" : "No");
+	seq_printf(s, "Hardware filtering: %s\n",
+		   caps->has_hwfilter ? "Yes" : "No");
 	seq_printf(s, "DMA: %s\n", caps->has_dma ? "Yes" : "No");
 	seq_printf(s, "Max bitrate: %d Mbps\n", caps->max_bitrate);
 

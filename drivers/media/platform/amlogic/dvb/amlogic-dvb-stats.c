@@ -34,14 +34,27 @@ void aml_stats_update_error(struct aml_dmx *dmx, int error_type)
 {
 	u64_stats_update_begin(&dmx->stats.syncp);
 	switch (error_type) {
-	case 0: u64_stats_inc(&dmx->stats.ts_errors);       break;
-	case 1: u64_stats_inc(&dmx->stats.crc_errors);      break;
-	case 2: u64_stats_inc(&dmx->stats.overflow_errors); break;
-	case 3: u64_stats_inc(&dmx->stats.cc_errors);       break;
+	case 0:
+		u64_stats_inc(&dmx->stats.ts_errors);
+		break;
+	case 1:
+		u64_stats_inc(&dmx->stats.crc_errors);
+		break;
+	case 2:
+		u64_stats_inc(&dmx->stats.overflow_errors);
+		break;
+	case 3:
+		u64_stats_inc(&dmx->stats.cc_errors);
+		break;
 	/* BUG-11: missing cases added */
-	case 4: u64_stats_inc(&dmx->stats.fifo_errors);     break;
-	case 5: u64_stats_inc(&dmx->stats.ts_drops);        break;
-	default: break;
+	case 4:
+		u64_stats_inc(&dmx->stats.fifo_errors);
+		break;
+	case 5:
+		u64_stats_inc(&dmx->stats.ts_drops);
+		break;
+	default:
+		break;
 	}
 	u64_stats_update_end(&dmx->stats.syncp);
 }
@@ -51,8 +64,8 @@ int aml_stats_get_summary(struct aml_dmx *dmx, char *buf, size_t size)
 {
 	unsigned int start;
 	u64 ts_packets, section_count, pes_count, ts_errors, crc_errors,
-	    overflow_errors, cc_errors, pcr_count, fifo_errors, ts_drops,
-	    irq_count, tasklet_count;
+		overflow_errors, cc_errors, pcr_count, fifo_errors, ts_drops,
+		irq_count, tasklet_count;
 
 	do {
 		start = u64_stats_fetch_begin(&dmx->stats.syncp);
@@ -71,23 +84,23 @@ int aml_stats_get_summary(struct aml_dmx *dmx, char *buf, size_t size)
 	} while (u64_stats_fetch_retry(&dmx->stats.syncp, start));
 
 	return snprintf(buf, size,
-		"Demux %d Statistics:\n"
-		"  TS Packets:    %llu\n"
-		"  TS Errors:     %llu\n"
-		"  CRC Errors:    %llu\n"
-		"  Overflows:     %llu\n"
-		"  CC Errors:     %llu\n"
-		"  Sections:      %llu\n"
-		"  PES Packets:   %llu\n"
-		"  PCR Count:     %llu\n"
-		"  FIFO Errors:   %llu\n"
-		"  TS Drops:      %llu\n"
-		"  IRQ Count:     %llu\n"
-		"  Tasklet Runs:  %llu\n",
-		dmx->id,
-		ts_packets, ts_errors, crc_errors, overflow_errors,
-		cc_errors, section_count, pes_count, pcr_count,
-		fifo_errors, ts_drops, irq_count, tasklet_count);
+			"Demux %d Statistics:\n"
+			"  TS Packets:    %llu\n"
+			"  TS Errors:     %llu\n"
+			"  CRC Errors:    %llu\n"
+			"  Overflows:     %llu\n"
+			"  CC Errors:     %llu\n"
+			"  Sections:      %llu\n"
+			"  PES Packets:   %llu\n"
+			"  PCR Count:     %llu\n"
+			"  FIFO Errors:   %llu\n"
+			"  TS Drops:      %llu\n"
+			"  IRQ Count:     %llu\n"
+			"  Tasklet Runs:  %llu\n",
+			dmx->id, ts_packets, ts_errors, crc_errors,
+			overflow_errors, cc_errors, section_count, pes_count,
+			pcr_count, fifo_errors, ts_drops, irq_count,
+			tasklet_count);
 }
 EXPORT_SYMBOL_GPL(aml_stats_get_summary);
 

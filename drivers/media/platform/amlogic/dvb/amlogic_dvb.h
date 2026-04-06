@@ -25,7 +25,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/i2c.h>
-#include <linux/proc_fs.h>                     /* ADDED: for struct i2c_client */
+#include <linux/proc_fs.h> /* ADDED: for struct i2c_client */
 
 #include <media/dmxdev.h>
 #include <media/dvbdev.h>
@@ -177,7 +177,7 @@ struct aml_dmx {
 
 	int irq;
 	int dvr_irq;
-	char irq_name[32];		/* /proc/interrupts label */
+	char irq_name[32]; /* /proc/interrupts label */
 
 	struct work_struct irq_work;
 
@@ -191,10 +191,10 @@ struct aml_dmx {
 
 	unsigned int source;
 	bool suspended;
-	bool sf_mode;			/* SW filter fallback active */
-	int  hw_pid_count;		/* active HW PID slot count */
+	bool sf_mode; /* SW filter fallback active */
+	int hw_pid_count; /* active HW PID slot count */
 
-	atomic_t dvr_feed_count;  /* active DVR feed count */
+	atomic_t dvr_feed_count; /* active DVR feed count */
 
 	u32 features;
 #define AML_DMX_CRC_CHECK	BIT(0)
@@ -211,10 +211,10 @@ struct aml_dmx {
 	struct {
 		u16 pid;
 		bool used;
-		int  type;		/* DMX_TYPE_SEC / DMX_TYPE_TS */
-		int  pkt_type;		/* FM memory packet type (3=section) */
-		int  pes_type;		/* DMX_PES_* */
-		int  filter_count;
+		int type; /* DMX_TYPE_SEC / DMX_TYPE_TS */
+		int pkt_type; /* FM memory packet type (3=section) */
+		int pes_type; /* DMX_PES_* */
+		int filter_count;
 		struct dvb_demux_feed *feed;
 		struct dvb_demux_feed *dvr_feed;
 	} channel[AML_CHANNEL_COUNT];
@@ -230,19 +230,19 @@ struct aml_dmx {
 	} filter[AML_FILTER_COUNT];
 
 	/* ── Section DMA buffer — same as vendor aml_dmx struct ── */
-	unsigned long  sec_pages;		/* DMA buffer virtual addr */
-	dma_addr_t     sec_pages_map;		/* DMA buffer physical addr */
-	int            sec_total_len;
+	unsigned long sec_pages; /* DMA buffer virtual addr */
+	dma_addr_t sec_pages_map; /* DMA buffer physical addr */
+	int sec_total_len;
 	struct {
-		unsigned long addr;		/* virtual (CPU access) */
-		int           len;
+		unsigned long addr; /* virtual (CPU access) */
+		int len;
 	} sec_buf[AML_SEC_BUF_COUNT];
-	u32  sec_buf_watchdog_count[AML_SEC_BUF_COUNT];
+	u32 sec_buf_watchdog_count[AML_SEC_BUF_COUNT];
 
 	/* ── DVR recorder state ── */
-	bool record;				/* TS_RECORDER_ENABLE active */
-	u32  chan_record_bits;			/* DEMUX_CHAN_RECORD_EN bitmask */
-	int  chan_count;			/* active channel count */
+	bool record; /* TS_RECORDER_ENABLE active */
+	u32 chan_record_bits; /* DEMUX_CHAN_RECORD_EN bitmask */
+	int chan_count; /* active channel count */
 
 	DECLARE_BITMAP(pid_bitmap, AML_HW_PID_MAX);
 	spinlock_t pid_lock ____cacheline_aligned;
@@ -292,7 +292,7 @@ struct aml_ts_input {
 	u32 mode;
 	int clk_div;
 	u32 invert;
-	u32 fec_ctrl;  /* DTS ts<n>_control value → FEC_INPUT_CONTROL[11:0] */
+	u32 fec_ctrl; /* DTS ts<n>_control value → FEC_INPUT_CONTROL[11:0] */
 };
 
 struct aml_s2p {
@@ -317,7 +317,7 @@ struct aml_asyncfifo {
 
 	int fill_irq;
 	int flush_irq;
-	char irq_name[16];		/* /proc/interrupts label — persistent storage */
+	char irq_name[16]; /* /proc/interrupts label — persistent storage */
 
 	struct work_struct poll_work;
 	atomic_t pending;
@@ -329,7 +329,7 @@ struct aml_asyncfifo {
 	u32 irq_threshold_min;
 	u32 irq_threshold_max;
 
-	u32 prev_chunk;  /* abs_chunk from the last IRQ — for delta calculation */
+	u32 prev_chunk; /* abs_chunk from the last IRQ — for delta calculation */
 
 	int cpu;
 };
@@ -358,13 +358,16 @@ struct aml_dvb {
 	struct aml_dvb_soc_data *soc;
 	const struct aml_dvb_hw_ops *hwops;
 
-	void __iomem *base_ts;		/* 0xffd06000: TS_IN, S2P, TOP_CONFIG */
-	void __iomem *base_demux;	/* 0xff638000: DEMUX core + ASYNC FIFO */
-	void __iomem *base_asyncfifo;	/* 0xFFD09000: async_fifo2 (per-FIFO channel) */
+	void __iomem *base_ts; /* 0xffd06000: TS_IN, S2P, TOP_CONFIG */
+	void __iomem *base_demux; /* 0xff638000: DEMUX core + ASYNC FIFO */
+	void __iomem *
+		base_asyncfifo; /* 0xFFD09000: async_fifo2 (per-FIFO channel) */
 
-	struct regmap *regmap_ts;	/* stb  region 0xFFD06000 (TS_IN, S2P, TOP) */
-	struct regmap *regmap_demux;	/* demux region 0xFF638000 (core, PID/section) */
-	struct regmap *regmap_async;	/* async_fifo   0xFFD09000 (DMA ring buffer) */
+	struct regmap *regmap_ts; /* stb  region 0xFFD06000 (TS_IN, S2P, TOP) */
+	struct regmap
+		*regmap_demux; /* demux region 0xFF638000 (core, PID/section) */
+	struct regmap
+		*regmap_async; /* async_fifo   0xFFD09000 (DMA ring buffer) */
 
 	struct clk *clk_demux;
 	struct clk *clk_asyncfifo;
@@ -381,9 +384,10 @@ struct aml_dvb {
 	struct aml_asyncfifo asyncfifo[AML_MAX_ASYNCFIFO];
 
 	struct dvb_frontend *frontend[AML_MAX_FRONTEND];
-	struct i2c_client *demod_client[AML_MAX_FRONTEND];   /* ADDED: I2C client references */
+	struct i2c_client *
+		demod_client[AML_MAX_FRONTEND]; /* ADDED: I2C client references */
 	int num_frontend;
-	struct proc_dir_entry *nim_proc_entry;	/* /proc/bus/nim_sockets */
+	struct proc_dir_entry *nim_proc_entry; /* /proc/bus/nim_sockets */
 
 	u32 ts_sync_byte;
 	u32 ts_packet_len;
@@ -401,7 +405,7 @@ struct aml_dvb {
 	struct dentry *debugfs_root;
 	struct debugfs_regset32 regset;
 
-	atomic_t feed_count;                /* active feed count */
+	atomic_t feed_count; /* active feed count */
 	u64_stats_t stats_irq;
 	u64_stats_t stats_packet;
 	struct u64_stats_sync stats_syncp;
@@ -452,10 +456,12 @@ static inline int aml_read_reg(struct aml_dvb *dvb, u32 reg, u32 *val)
 	return regmap_read(dvb->regmap_demux, reg, val);
 }
 
-static inline int aml_update_bits(struct aml_dvb *dvb, u32 reg, u32 mask, u32 val)
+static inline int aml_update_bits(struct aml_dvb *dvb, u32 reg, u32 mask,
+				  u32 val)
 {
 	if (AML_IS_TS_REG(reg))
-		return regmap_update_bits(dvb->regmap_ts, AML_TS_OFF(reg), mask, val);
+		return regmap_update_bits(dvb->regmap_ts, AML_TS_OFF(reg), mask,
+					  val);
 	return regmap_update_bits(dvb->regmap_demux, reg, mask, val);
 }
 
@@ -470,7 +476,8 @@ static inline int aml_read_async(struct aml_dvb *dvb, u32 reg, u32 *val)
 	return regmap_read(dvb->regmap_async, reg, val);
 }
 
-static inline int aml_update_async(struct aml_dvb *dvb, u32 reg, u32 mask, u32 val)
+static inline int aml_update_async(struct aml_dvb *dvb, u32 reg, u32 mask,
+				   u32 val)
 {
 	return regmap_update_bits(dvb->regmap_async, reg, mask, val);
 }
@@ -491,7 +498,7 @@ int aml_dmx_hw_init(struct aml_dmx *dmx);
 void aml_dmx_hw_release(struct aml_dmx *dmx);
 int aml_dmx_set_source(struct aml_dmx *dmx, unsigned int source);
 void aml_dmx_enable_recording(struct aml_dmx *dmx, bool enable);
-void aml_dmx_process_section(struct aml_dmx *dmx);  /* called from IRQ handler */
+void aml_dmx_process_section(struct aml_dmx *dmx); /* called from IRQ handler */
 int aml_dmx_hw_pid_alloc(struct aml_dmx *dmx, u16 pid);
 void aml_dmx_hw_pid_free(struct aml_dmx *dmx, int slot);
 int aml_dmx_dvb_init(struct aml_dmx *dmx, struct dvb_adapter *adap);
@@ -529,8 +536,12 @@ u64 aml_dmx_get_pcr(struct aml_dmx *dmx);
 void aml_dvb_debugfs_init(struct aml_dvb *dvb);
 void aml_dvb_debugfs_exit(struct aml_dvb *dvb);
 #else
-static inline void aml_dvb_debugfs_init(struct aml_dvb *dvb) {}
-static inline void aml_dvb_debugfs_exit(struct aml_dvb *dvb) {}
+static inline void aml_dvb_debugfs_init(struct aml_dvb *dvb)
+{
+}
+static inline void aml_dvb_debugfs_exit(struct aml_dvb *dvb)
+{
+}
 #endif
 
 /* GPIO control */
@@ -560,8 +571,8 @@ void aml_dvb_list_del(struct aml_dvb *dvb);
 /* Called by avl6862_probe() to register the frontend.
  * -EPROBE_DEFER: platform not yet ready, kernel retries automatically */
 int aml_dvb_register_frontend(struct device_node *fe_node,
-			       struct dvb_frontend *fe,
-			       struct i2c_client *client);
+			      struct dvb_frontend *fe,
+			      struct i2c_client *client);
 void aml_dvb_unregister_frontend(struct device_node *fe_node);
 
 /* Advanced features */
