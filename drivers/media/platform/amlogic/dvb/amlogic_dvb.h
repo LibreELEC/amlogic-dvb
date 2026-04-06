@@ -16,7 +16,7 @@
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 
-#include "amlogic-dvb-regs.h" /* AML_TS_REG_FLAG ve diğer register makroları */
+#include "amlogic-dvb-regs.h" /* AML_TS_REG_FLAG and other register macros */
 #include <linux/atomic.h>
 #include <linux/timer.h>
 #include <linux/debugfs.h>
@@ -25,7 +25,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/i2c.h>
-#include <linux/proc_fs.h>                     /* EKLENDI: struct i2c_client için */
+#include <linux/proc_fs.h>                     /* ADDED: for struct i2c_client */
 
 #include <media/dmxdev.h>
 #include <media/dvbdev.h>
@@ -38,7 +38,7 @@
 #include "amlogic-dvb-soc.h"
 #include "amlogic-dvb-hwops.h"
 
-/* Eski kernel fonksiyonlarını yeni kernel karşılıklarına eşitleyelim */
+/* Map legacy kernel functions to their current equivalents */
 #ifndef del_timer_sync
   #define del_timer_sync timer_delete_sync
 #endif
@@ -46,7 +46,7 @@
   #define del_timer timer_delete
 #endif
 
-/* Hardware limits – güncellenmiş değerler */
+/* Hardware limits — updated values */
 #define AML_MAX_DEMUX		3
 #define AML_MAX_TS_INPUT	2
 #define AML_MAX_S2P		3
@@ -54,49 +54,49 @@
 #define AML_MAX_ASYNCFIFO	3
 #define AML_HW_PID_MAX		32
 #define AML_MAX_FRONTEND	4
-#define AML_MAX_GPIOS		16	/* platform GPIO tablo boyutu */
+#define AML_MAX_GPIOS		16	/* platform GPIO table size */
 
-/* Section filter buffer — vendor aml_dvb.h ile aynı */
+/* Section filter buffer — same as vendor aml_dvb.h */
 #define AML_SEC_BUF_GRP_COUNT	4
 #define AML_SEC_GRP_LEN_SHIFT	0xc		/* 1 << 0xc = 4096 byte/slot */
 #define AML_SEC_BUF_COUNT	(AML_SEC_BUF_GRP_COUNT * 8)  /* 32 buffer slot */
-#define AML_SEC_WD_BUSY0_MAX	5		/* busy=0 watchdog eşiği */
-#define AML_SEC_WD_BUSY1_MAX	0x500		/* busy=1 watchdog eşiği */
+#define AML_SEC_WD_BUSY0_MAX	5		/* busy=0 watchdog threshold */
+#define AML_SEC_WD_BUSY1_MAX	0x500		/* busy=1 watchdog threshold */
 
 /* TS packet constants */
 #define AML_TS_PACKET_SIZE		188
 #define AML_TS_BURST_PACKETS		32
 #define AML_TS_DMA_SIZE			(AML_TS_PACKET_SIZE * AML_TS_BURST_PACKETS)
 #define AML_TS_CHUNK_PACKETS		512
-#define AML_ASYNC_FLUSH_SIZE		(256 * 1024)  /* 256KB — IRQ başına işleme birimi.
-						       * V2.17: 256KB→64KB (IRQ arttırmak için)
-						       * V2.19: 64KB→256KB (CPU yükü azaltmak için)
+#define AML_ASYNC_FLUSH_SIZE		(256 * 1024)  /* 256KB — processing unit per IRQ.
+						       * V2.17: 256KB→64KB (to increase IRQ rate)
+						       * V2.19: 64KB→256KB (to reduce CPU load)
 						       *
-						       * Tvheadend multi-TP scan sırasında dvb_dmx_swfilter()
-						       * spin_lock(&demux->lock) ile serialize edilir.
-						       * 64KB@8ms → 117 IRQ/sn, 40K pkt/sn × 100 filter = %100 CPU
-						       * 256KB@32ms → 29 IRQ/sn → ~4× daha az CPU kullanımı.
-						       * Section filter max gecikme: 32ms (timeout 15s → sorun yok).
-						       * Streaming gecikme: 32ms (live TV için kabul edilebilir). */
+						       * During Tvheadend multi-TP scan, dvb_dmx_swfilter()
+						       * is serialised with spin_lock(&demux->lock).
+						       * 64KB@8ms → 117 IRQ/s, 40K pkt/s × 100 filter = 100% CPU
+						       * 256KB@32ms → 29 IRQ/s → ~4× less CPU usage.
+						       * Section filter max latency: 32ms (timeout 15s → no issue).
+						       * Streaming latency: 32ms (acceptable for live TV). */
 /*
- * AML_ASYNC_BUF_SIZE = 512KB  (vendor asyncfifo_buf_len default ile aynı)
+ * AML_ASYNC_BUF_SIZE = 512KB  (same as vendor asyncfifo_buf_len default)
  *
- * VENDOR KAYNAK ANALİZİ (aml_dmx.c async_fifo_set_regs):
- *   REG1 FLUSH_CNT = size >> 7  ← BİRİM 128 BYTE (1KB değil!)
+ * VENDOR SOURCE ANALYSIS (aml_dmx.c async_fifo_set_regs):
+ *   REG1 FLUSH_CNT = size >> 7  ← UNIT is 128 BYTES (not 1KB!)
  *   REG3 IRQ_THRESH = (size >> (factor+7)) - 1
  *
- * 512KB buffer için:
+ * For 512KB buffer:
  *   FLUSH_CNT = 512K >> 7 = 4096 = 0x1000
  *   factor = dmx_get_order(512K/256K) = dmx_get_order(2) = 1
- *   IRQ_THRESH = (512K >> 8) - 1 = 2047 = 0x7FF  (her 256KB IRQ)
+ *   IRQ_THRESH = (512K >> 8) - 1 = 2047 = 0x7FF  (IRQ every 256KB)
  *   ring_entries = 512K / 256K = 2  (buf_toggle: 0,1)
  *
- * NOT: AsyncFIFO sadece DVR kayıt içindir.
- * PAT/PMT section filterleri DMX IRQ yolunu kullanır, AsyncFIFO kullanmaz.
+ * NOTE: AsyncFIFO is only for DVR recording.
+ * PAT/PMT section filters use the DMX IRQ path, not AsyncFIFO.
  */
 #define AML_ASYNC_BUF_SIZE		(512 * 1024)
 
-/* Demux resources per core – EKSLİK OLAN SABİTLER BURADA */
+/* Demux resources per core — PREVIOUSLY MISSING CONSTANTS ARE HERE */
 #define AML_CHANNEL_COUNT	32
 #define AML_FILTER_COUNT	32
 #define AML_FILTER_LEN		15
@@ -104,7 +104,7 @@
 /* Buffer sizes */
 #define AML_PES_BUF_SIZE	(64 * 1024)
 #define AML_SEC_BUF_SIZE	(4096 * 32)
-/* AML_ASYNC_BUF_SIZE yukarıda (16MB) tanımlandı */
+/* AML_ASYNC_BUF_SIZE defined above */
 #define AML_TS_SEG_SIZE		AML_TS_DMA_SIZE
 #define AML_SMALLSEC_SIZE	(16 * 4 * 256)
 
@@ -130,7 +130,7 @@ enum aml_ts_source {
 struct aml_dvb;
 struct aml_dvb_hw_ops;
 
-/* Statistics struct – u64_stats_t tabanlı */
+/* Statistics struct — u64_stats_t based */
 struct aml_dmx_stats {
 	u64_stats_t ts_packets;
 	u64_stats_t section_count;
@@ -177,7 +177,7 @@ struct aml_dmx {
 
 	int irq;
 	int dvr_irq;
-	char irq_name[32];		/* /proc/interrupts etiketi */
+	char irq_name[32];		/* /proc/interrupts label */
 
 	struct work_struct irq_work;
 
@@ -191,10 +191,10 @@ struct aml_dmx {
 
 	unsigned int source;
 	bool suspended;
-	bool sf_mode;			/* SW filter fallback aktif mi */
-	int  hw_pid_count;		/* aktif HW PID slot sayısı */
+	bool sf_mode;			/* SW filter fallback active */
+	int  hw_pid_count;		/* active HW PID slot count */
 
-	atomic_t dvr_feed_count;  /* aktif DVR feed sayisi */
+	atomic_t dvr_feed_count;  /* active DVR feed count */
 
 	u32 features;
 #define AML_DMX_CRC_CHECK	BIT(0)
@@ -207,12 +207,12 @@ struct aml_dmx {
 	spinlock_t lock ____cacheline_aligned;
 	struct aml_dmx_stats stats;
 
-	/* Channel ve filter dizileri – burada AML_CHANNEL_COUNT vs. kullanılıyor */
+	/* Channel and filter arrays — AML_CHANNEL_COUNT etc. used here */
 	struct {
 		u16 pid;
 		bool used;
 		int  type;		/* DMX_TYPE_SEC / DMX_TYPE_TS */
-		int  pkt_type;		/* FM memory paket tipi (3=section) */
+		int  pkt_type;		/* FM memory packet type (3=section) */
 		int  pes_type;		/* DMX_PES_* */
 		int  filter_count;
 		struct dvb_demux_feed *feed;
@@ -229,20 +229,20 @@ struct aml_dmx {
 		bool neq;
 	} filter[AML_FILTER_COUNT];
 
-	/* ── Section DMA buffer — vendor aml_dmx struct ile aynı ── */
+	/* ── Section DMA buffer — same as vendor aml_dmx struct ── */
 	unsigned long  sec_pages;		/* DMA buffer virtual addr */
 	dma_addr_t     sec_pages_map;		/* DMA buffer physical addr */
 	int            sec_total_len;
 	struct {
-		unsigned long addr;		/* virtual (CPU erişim) */
+		unsigned long addr;		/* virtual (CPU access) */
 		int           len;
 	} sec_buf[AML_SEC_BUF_COUNT];
 	u32  sec_buf_watchdog_count[AML_SEC_BUF_COUNT];
 
 	/* ── DVR recorder state ── */
-	bool record;				/* TS_RECORDER_ENABLE aktif */
+	bool record;				/* TS_RECORDER_ENABLE active */
 	u32  chan_record_bits;			/* DEMUX_CHAN_RECORD_EN bitmask */
-	int  chan_count;			/* aktif channel sayısı */
+	int  chan_count;			/* active channel count */
 
 	DECLARE_BITMAP(pid_bitmap, AML_HW_PID_MAX);
 	spinlock_t pid_lock ____cacheline_aligned;
@@ -292,7 +292,7 @@ struct aml_ts_input {
 	u32 mode;
 	int clk_div;
 	u32 invert;
-	u32 fec_ctrl;  /* DTS ts<n>_control değeri → FEC_INPUT_CONTROL[11:0] */
+	u32 fec_ctrl;  /* DTS ts<n>_control value → FEC_INPUT_CONTROL[11:0] */
 };
 
 struct aml_s2p {
@@ -317,7 +317,7 @@ struct aml_asyncfifo {
 
 	int fill_irq;
 	int flush_irq;
-	char irq_name[16];		/* /proc/interrupts etiketi — kalıcı alan */
+	char irq_name[16];		/* /proc/interrupts label — persistent storage */
 
 	struct work_struct poll_work;
 	atomic_t pending;
@@ -329,7 +329,7 @@ struct aml_asyncfifo {
 	u32 irq_threshold_min;
 	u32 irq_threshold_max;
 
-	u32 prev_chunk;  /* son IRQ'daki abs_chunk — delta hesabı için */
+	u32 prev_chunk;  /* abs_chunk from the last IRQ — for delta calculation */
 
 	int cpu;
 };
@@ -360,10 +360,10 @@ struct aml_dvb {
 
 	void __iomem *base_ts;		/* 0xffd06000: TS_IN, S2P, TOP_CONFIG */
 	void __iomem *base_demux;	/* 0xff638000: DEMUX core + ASYNC FIFO */
-	void __iomem *base_asyncfifo;	/* 0xFFD09000: async_fifo2 (FIFO kanal bazı) */
+	void __iomem *base_asyncfifo;	/* 0xFFD09000: async_fifo2 (per-FIFO channel) */
 
-	struct regmap *regmap_ts;	/* stb  bölgesi 0xFFD06000 (TS_IN, S2P, TOP) */
-	struct regmap *regmap_demux;	/* demux bölgesi 0xFF638000 (core, PID/section) */
+	struct regmap *regmap_ts;	/* stb  region 0xFFD06000 (TS_IN, S2P, TOP) */
+	struct regmap *regmap_demux;	/* demux region 0xFF638000 (core, PID/section) */
 	struct regmap *regmap_async;	/* async_fifo   0xFFD09000 (DMA ring buffer) */
 
 	struct clk *clk_demux;
@@ -381,7 +381,7 @@ struct aml_dvb {
 	struct aml_asyncfifo asyncfifo[AML_MAX_ASYNCFIFO];
 
 	struct dvb_frontend *frontend[AML_MAX_FRONTEND];
-	struct i2c_client *demod_client[AML_MAX_FRONTEND];   /* EKLENDI: I2C client referansları */
+	struct i2c_client *demod_client[AML_MAX_FRONTEND];   /* ADDED: I2C client references */
 	int num_frontend;
 	struct proc_dir_entry *nim_proc_entry;	/* /proc/bus/nim_sockets */
 
@@ -401,7 +401,7 @@ struct aml_dvb {
 	struct dentry *debugfs_root;
 	struct debugfs_regset32 regset;
 
-	atomic_t feed_count;                /* aktif feed sayısı */
+	atomic_t feed_count;                /* active feed count */
 	u64_stats_t stats_irq;
 	u64_stats_t stats_packet;
 	struct u64_stats_sync stats_syncp;
@@ -409,7 +409,7 @@ struct aml_dvb {
 	u32 target_bitrate;
 	u32 current_rate;
 
-	/* Platform GPIO tablosu — /sys/kernel/debug/gpio consumer isimleri */
+	/* Platform GPIO table — /sys/kernel/debug/gpio consumer names */
 	struct {
 		struct gpio_desc *gd;
 		const char *label;
@@ -428,7 +428,7 @@ struct aml_dvb {
 
 /* Helper functions
  *
- * Register routing (dev/mem ile doğrulanmış):
+ * Register routing (verified with dev/mem):
  *   TS_IN_CTRL(n)  = AML_TS_REG(n * 0x140)       ─┐ regmap_ts    (0xffd06000)
  *   TS_S2P_CTRL(n) = AML_TS_REG(n * 0x140 + 0x40) ─┘
  *   DEMUX_CONTROL  = 0xff638010                   ─┐ regmap_demux (0xff638000)
@@ -491,7 +491,7 @@ int aml_dmx_hw_init(struct aml_dmx *dmx);
 void aml_dmx_hw_release(struct aml_dmx *dmx);
 int aml_dmx_set_source(struct aml_dmx *dmx, unsigned int source);
 void aml_dmx_enable_recording(struct aml_dmx *dmx, bool enable);
-void aml_dmx_process_section(struct aml_dmx *dmx);  /* IRQ handler'dan çağrılır */
+void aml_dmx_process_section(struct aml_dmx *dmx);  /* called from IRQ handler */
 int aml_dmx_hw_pid_alloc(struct aml_dmx *dmx, u16 pid);
 void aml_dmx_hw_pid_free(struct aml_dmx *dmx, int slot);
 int aml_dmx_dvb_init(struct aml_dmx *dmx, struct dvb_adapter *adap);
@@ -534,14 +534,14 @@ static inline void aml_dvb_debugfs_exit(struct aml_dvb *dvb) {}
 #endif
 
 /* GPIO control */
-/* Generic demod power+reset sekansı — avl6862_probe() ve benzerleri kullanır.
- * @dev: I2C client device, GPIO'lar ve timing bu node'dan okunur.
- * DTS property'leri (isteğe bağlı):
+/* Generic demod power+reset sequence — used by avl6862_probe() and similar.
+ * @dev: I2C client device, GPIOs and timing are read from this node.
+ * DTS properties (optional):
  *   power-off-delay-ms, power-on-delay-ms,
  *   reset-assert-ms, reset-release-ms */
 int aml_demod_power_reset(struct device *dev);
 
-/* Eski aml_dvb tabanlı API — geriye dönük uyumluluk için bırakıldı, stub */
+/* Legacy aml_dvb-based API — kept for backwards compatibility, stub */
 int aml_gpio_init(struct aml_dvb *dvb);
 void aml_gpio_release(struct aml_dvb *dvb);
 
@@ -553,12 +553,12 @@ void aml_pinctrl_release(struct aml_dvb *dvb);
 int aml_dvb_probe_frontends(struct aml_dvb *dvb);
 void aml_dvb_release_frontends(struct aml_dvb *dvb);
 
-/* Global adapter listesi — avl6862_probe() tarafından kullanılır */
+/* Global adapter list — used by avl6862_probe() */
 void aml_dvb_list_add(struct aml_dvb *dvb);
 void aml_dvb_list_del(struct aml_dvb *dvb);
 
-/* avl6862_probe() frontend'i kayıt etmek için çağırır.
- * -EPROBE_DEFER: platform henüz hazır değil, kernel otomatik tekrar dener */
+/* Called by avl6862_probe() to register the frontend.
+ * -EPROBE_DEFER: platform not yet ready, kernel retries automatically */
 int aml_dvb_register_frontend(struct device_node *fe_node,
 			       struct dvb_frontend *fe,
 			       struct i2c_client *client);

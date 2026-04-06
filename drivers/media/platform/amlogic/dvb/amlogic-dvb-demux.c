@@ -2,11 +2,11 @@
 /*
  * Amlogic DVB hardware demux — V2.60
  *
- * Mimari (vendor aml_dmx.c ile aynı):
+ * Architecture (same as vendor aml_dmx.c):
  *   HW section path: DMX_TYPE_SEC → FM memory → SEC_BUFF DMA
  *     → SEC_BUFF_READY IRQ → process_section() → cb.sec()
  *   DVR path: DMX_TYPE_TS/DVR → TS_RECORDER_ENABLE → AFIFO → cb.ts()
- *   İkisi eşzamanlı, aynı DMX üzerinde çalışır.
+ *   Both run concurrently on the same DMX.
  */
 #define CREATE_TRACE_POINTS
 #include "amlogic-dvb-trace.h"
@@ -21,19 +21,19 @@
 #include "amlogic-dvb-regs.h"
 
 /* ==================================================================
- * Modül parametreleri — SW filter zorlaması
+ * Module parameters — forced SW filtering
  * ================================================================== */
 static int force_sec_sf;
 module_param(force_sec_sf, int, 0644);
-MODULE_PARM_DESC(force_sec_sf, "Section feed'leri SW filter'a zorla (debug)");
+MODULE_PARM_DESC(force_sec_sf, "Force section feeds to SW filter (debug)");
 
 static int force_pes_sf;
 module_param(force_pes_sf, int, 0644);
-MODULE_PARM_DESC(force_pes_sf, "PES feed'leri SW filter'a zorla (debug)");
+MODULE_PARM_DESC(force_pes_sf, "Force PES feeds to SW filter (debug)");
 
 static int force_all_sf;
 module_param(force_all_sf, int, 0644);
-MODULE_PARM_DESC(force_all_sf, "Tüm feed'leri SW filter'a zorla (debug)");
+MODULE_PARM_DESC(force_all_sf, "Force all feeds to SW filter (debug)");
 
 #define AML_HW_PID_SLOTS  AML_CHANNEL_COUNT
 
@@ -43,7 +43,7 @@ static int  dmx_set_chan_regs(struct aml_dmx *dmx, int cid);
 static int  dmx_set_filter_regs(struct aml_dmx *dmx, int fid);
 
 /* ======================================================================
- * sec_filter_match — vendor birebir
+ * sec_filter_match — vendor verbatim
  * ====================================================================== */
 static bool sec_filter_match(struct aml_dmx *dmx, int fid, const u8 *p)
 {
@@ -114,7 +114,7 @@ static void software_match_section(struct aml_dmx *dmx, u16 buf_num)
 }
 
 /* ======================================================================
- * aml_dmx_process_section — SEC_BUFF_READY IRQ handler (vendor birebir)
+ * aml_dmx_process_section — SEC_BUFF_READY IRQ handler (vendor verbatim)
  * ====================================================================== */
 void aml_dmx_process_section(struct aml_dmx *dmx)
 {
@@ -145,7 +145,7 @@ void aml_dmx_process_section(struct aml_dmx *dmx)
 			continue;
 		}
 		if (sec_num >= AML_FILTER_COUNT) {
-			/* geçersiz filter watchdog */
+			/* invalid filter watchdog */
 			dmx->sec_buf_watchdog_count[i] &= 0xFFFFu;
 			dmx->sec_buf_watchdog_count[i] += 0x100;
 			if (dmx->sec_buf_watchdog_count[i] >= AML_SEC_WD_BUSY1_MAX) {
@@ -243,24 +243,24 @@ static void sec_buf_free(struct aml_dmx *dmx)
 }
 
 /* ==================================================================
- * HW/SW Filter geçiş mekanizması
+ * HW/SW Filter transition mechanism
  *
- * HW path (varsayılan): SECTION_AHB_DMA_EN=1, sec_buf DMA
+ * HW path (default): SECTION_AHB_DMA_EN=1, sec_buf DMA
  *   → SEC_BUFF_READY IRQ → process_section() → cb.sec()
  *
  * SW path (fallback): BYPASS_AHB_DMA_EN=1, raw TS → AsyncFIFO
  *   → dvb_dmx_swfilter() → Linux DVB core
- *   Tetikleyiciler: 32 HW slot dolu, PID=0x2000, force_*_sf param
+ *   Triggers: 32 HW slots full, PID=0x2000, force_*_sf param
  *
- * Önemli: SF path ayrı bir DMX/AFIFO kullanmıyor (vendor hatasını
- * tekrarlamıyoruz). Aynı DMX, sadece DEMUX_MEM_REQ_EN değişiyor.
+ * Important: SF path does not use a separate DMX/AFIFO (we are not
+ * repeating the vendor's mistake). Same DMX, only DEMUX_MEM_REQ_EN changes.
  * ================================================================== */
 
 /* sf_feed_sf — 1: HW path kullan, 0: SW path kullan */
 static int sf_feed_sf(struct aml_dmx *dmx, struct dvb_demux_feed *feed,
 		      int add_not_remove)
 {
-	/* Zaten SW modundaysak SW'de kal */
+	/* If already in SW mode, stay in SW */
 	if (dmx->sf_mode)
 		return 0;
 
@@ -268,7 +268,7 @@ static int sf_feed_sf(struct aml_dmx *dmx, struct dvb_demux_feed *feed,
 	if (feed->pid == 0x2000)
 		return 0;
 
-	/* Debug parametreleri */
+	/* Debug parameters */
 	if (force_all_sf)
 		return 0;
 	if (feed->type == DMX_TYPE_TS  && force_pes_sf)
@@ -283,9 +283,9 @@ static int sf_feed_sf(struct aml_dmx *dmx, struct dvb_demux_feed *feed,
 	return 1;  /* HW */
 }
 
-/* sf_add_feed — feed'i SW filter moduna al
- * SF path: aynı DMX üzerinde BYPASS_AHB_DMA_EN → AsyncFIFO → swfilter
- * NOT: Vendor gibi DMX2/AFIFO1 kullanmıyoruz — gereksiz karmaşıklık. */
+/* sf_add_feed — put feed into SW filter mode
+ * SF path: BYPASS_AHB_DMA_EN on the same DMX → AsyncFIFO → swfilter
+ * NOTE: We do not use DMX2/AFIFO1 like the vendor — unnecessary complexity. */
 static void sf_add_feed(struct aml_dmx *dmx, struct dvb_demux_feed *feed)
 {
 	dmx->sf_mode = true;
@@ -295,29 +295,29 @@ static void sf_add_feed(struct aml_dmx *dmx, struct dvb_demux_feed *feed)
 		 dmx->id, feed->pid, dmx->hw_pid_count, AML_CHANNEL_COUNT);
 }
 
-/* sf_remove_feed — feed SW moddan çıktı, gerekirse HW'ye dön */
+/* sf_remove_feed — feed has left SW mode; return to HW if possible */
 static void sf_remove_feed(struct aml_dmx *dmx, struct dvb_demux_feed *feed)
 {
-	/* Aktif SW feed kalmadıysa ve HW slotları müsaitse HW'ye dön */
+	/* If no active SW feeds remain and HW slots are available, return to HW */
 	if (dmx->sf_mode && dmx->hw_pid_count < AML_CHANNEL_COUNT) {
 		dmx->sf_mode = false;
 		dmx_enable(dmx);	/* SECTION_AHB_DMA_EN=1 geri gelir */
 		dev_info(dmx->dvb->dev,
-			 "dmx%d: PID=0x%04x → HW filter geri döndü\n",
+			 "dmx%d: PID=0x%04x → returned to HW filter\n",
 			 dmx->id, feed->pid);
 	}
 }
 
 /* ======================================================================
- * FM (Filter Memory) yazım yardımcıları — vendor dmx_set_chan/filter_regs
+ * FM (Filter Memory) write helpers — vendor dmx_set_chan/filter_regs
  *
- * FM word formatı (32-bit):
- *   [31:16] = çift (even) channel/filter girişi
- *   [15:0]  = tek  (odd)  channel/filter girişi
- *   addr = index >> 1  ← donanım mimarisi, 2 giriş = 1 word
+ * FM word format (32-bit):
+ *   [31:16] = even channel/filter entry
+ *   [15:0]  = odd  channel/filter entry
+ *   addr = index >> 1  ← hardware architecture, 2 entries = 1 word
  *
- * FM_WR_ADDR[15] = WR_REQUEST strobe (donanım sıfırlar)
- * FM_WR_ADDR[31:24] = advance byte (filter sayısı bilgisi)
+ * FM_WR_ADDR[15] = WR_REQUEST strobe (hardware clears)
+ * FM_WR_ADDR[31:24] = advance byte (filter count info)
  * ====================================================================== */
 
 static int fm_wait_ready(struct aml_dmx *dmx)
@@ -363,8 +363,8 @@ static u32 chan_target(struct aml_dmx *dmx, int cid)
  * filter_target — vendor dmx_get_filter_target birebir
  *
  * Byte 0 (table_id): MASKHIGH/MASKLOW ile nibble maskeleme
- * Byte 1-2: her zaman sıfır (section length, reserved)
- * Byte 3-14: MASK/MASK_EQ ile değer karşılaştırma
+ * Byte 1-2: always zero (section length, reserved)
+ * Byte 3-14: value comparison with MASK/MASK_EQ
  */
 static u32 filter_target_byte(struct aml_dmx *dmx, int fid, int byte_idx)
 {
@@ -380,7 +380,7 @@ static u32 filter_target_byte(struct aml_dmx *dmx, int fid, int byte_idx)
 	cid    = dmx->filter[fid].chan_id;
 	filter = dmx->filter[fid].filter;
 
-	/* neq_bytes sayısı */
+	/* neq_bytes count */
 	neq_bytes = 0;
 	if (filter->filter_mode[0] != 0xFF) {
 		neq_bytes = 2;
@@ -442,7 +442,7 @@ static u32 filter_target_byte(struct aml_dmx *dmx, int fid, int byte_idx)
 
 /*
  * dmx_set_chan_regs — vendor dmx_set_chan_regs birebir
- * İki channel bir FM word: addr = cid >> 1
+ * Two channels per FM word: addr = cid >> 1
  */
 static int dmx_set_chan_regs(struct aml_dmx *dmx, int cid)
 {
@@ -454,7 +454,7 @@ static int dmx_set_chan_regs(struct aml_dmx *dmx, int cid)
 	if (fm_wait_ready(dmx))
 		return -ETIMEDOUT;
 
-	/* Çift paketleme: even ve odd channel birlikte */
+	/* Dual packing: even and odd channels together */
 	if (cid & 1) {
 		even = cid - 1;
 		odd  = cid;
@@ -469,7 +469,7 @@ static int dmx_set_chan_regs(struct aml_dmx *dmx, int cid)
 	aml_write_reg(dmx->dvb, FM_WR_DATA(dmx->id), data);
 	aml_write_reg(dmx->dvb, FM_WR_ADDR(dmx->id), 0x8000u | addr);
 
-	/* MAX_FM_COMP_ADDR — max channel index güncelle (bit[3:0] = max>>1) */
+	/* MAX_FM_COMP_ADDR — update max channel index (bit[3:0] = max>>1) */
 	for (max = AML_CHANNEL_COUNT-1, i = AML_CHANNEL_COUNT-1; i > 0; i--)
 		if (dmx->channel[i].used) { max = i; break; }
 	aml_read_reg(dmx->dvb, MAX_FM_COMP_ADDR(dmx->id), &cur);
@@ -484,7 +484,7 @@ static int dmx_set_chan_regs(struct aml_dmx *dmx, int cid)
 
 /*
  * dmx_set_filter_regs — vendor dmx_set_filter_regs birebir
- * İki filter bir FM row: addr = (fid>>1) | ((byte+1)<<4)
+ * Two filters per FM row: addr = (fid>>1) | ((byte+1)<<4)
  */
 static int dmx_set_filter_regs(struct aml_dmx *dmx, int fid)
 {
@@ -514,7 +514,7 @@ static int dmx_set_filter_regs(struct aml_dmx *dmx, int fid)
 		aml_write_reg(dmx->dvb, FM_WR_ADDR(dmx->id), 0x8000u | addr);
 	}
 
-	/* MAX_FM_COMP_ADDR — max filter index güncelle (bit[7:4] = max>>1) */
+	/* MAX_FM_COMP_ADDR — update max filter index (bit[7:4] = max>>1) */
 	for (max = AML_FILTER_COUNT-1, i = AML_FILTER_COUNT-1; i > 0; i--)
 		if (dmx->filter[i].used) { max = i; break; }
 	aml_read_reg(dmx->dvb, MAX_FM_COMP_ADDR(dmx->id), &cur);
@@ -529,7 +529,7 @@ static int dmx_set_filter_regs(struct aml_dmx *dmx, int fid)
 }
 
 /* ======================================================================
- * Channel / filter tahsis
+ * Channel / filter allocation
  * ====================================================================== */
 static int dmx_alloc_chan(struct aml_dmx *dmx, int type, int pes_type, u16 pid)
 {
@@ -577,12 +577,12 @@ static int dmx_alloc_filter(struct aml_dmx *dmx, int cid, struct dvb_demux_filte
 		if (!dmx->filter[i].used) { id = i; break; }
 	if (id < 0) return -ENOSPC;
 
-	/* filter_target_byte() doğrudan sf->filter_value/mask/mode okur */
+	/* filter_target_byte() reads sf->filter_value/mask/mode directly */
 	dmx->filter[id].used    = true;
 	dmx->filter[id].chan_id = cid;
 	dmx->filter[id].filter  = sf;
 
-	/* sec_filter_match için value/maskandmode doldur */
+	/* Populate value/maskandmode for sec_filter_match */
 	for (i = 0; i < AML_FILTER_LEN; i++) {
 		u8 m = sf->filter_mask[i];
 		u8 mo = sf->filter_mode[i];
@@ -609,7 +609,7 @@ static void dmx_free_filter(struct aml_dmx *dmx, int fid)
 }
 
 /* ======================================================================
- * dmx_enable — DEMUX_CONTROL + MEM_REQ (vendor dmx_enable mantığı)
+ * dmx_enable — DEMUX_CONTROL + MEM_REQ (vendor dmx_enable logic)
  * ====================================================================== */
 static void dmx_enable(struct aml_dmx *dmx)
 {
@@ -627,11 +627,11 @@ static void dmx_enable(struct aml_dmx *dmx)
 	    dmx->source <= AML_TS_SRC_FRONTEND_TS3) {
 		unsigned int p = dmx->source - AML_TS_SRC_FRONTEND_TS0;
 		/*
-		 * FEC_SEL[14:12] kaynağını seç:
+		 * FEC_SEL[14:12] source selection:
 		 *   0=TS0p(parallel)  1=TS1p  4=STS2(serial) 5=STS1 6=STS0
-		 * Serial input (tsin_a_ao) için STS0=6 kullanılmalı.
-		 * Parallel input için port index direkt FEC_SEL'e eşlenir.
-		 * Kaynak: vendor c_stb_regs_define.h + CoreELEC devmem doğrulama.
+		 * For serial input (tsin_a_ao), STS0=6 must be used.
+		 * For parallel input, port index maps directly to FEC_SEL.
+		 * Source: vendor c_stb_regs_define.h + CoreELEC devmem verification.
 		 */
 		if (p < AML_MAX_TS_INPUT && dvb->ts[p].is_serial) {
 			/* Serial: STS0=6, STS1=5, STS2=4 */
@@ -652,15 +652,15 @@ static void dmx_enable(struct aml_dmx *dmx)
 	aml_write_reg(dvb, STB_OM_CTL(dmx->id),     (0x40u << 9) | 0x7Fu);
 	aml_write_reg(dvb, VIDEO_STREAM_ID(dmx->id), record ? 0xFFFF0000u : 0u);
 	/*
-	 * TS_RECORDER_ENABLE: DMX'e TS paketi akışını açar.
-	 * SECTION_AHB_DMA_EN etkin olsa da bu bit sıfırsa TS verisi
-	 * demux çekirdeğine ulaşmaz → section filter veri alamaz.
-	 * Bu nedenle aktif feed (chan_count > 0) veya kayıt varsa
-	 * her zaman set edilir (vendor hybrid mimarisi).
+	 * TS_RECORDER_ENABLE: enables TS packet flow to the DMX.
+	 * Even if SECTION_AHB_DMA_EN is active, if this bit is zero
+	 * TS data does not reach the demux core → section filter gets no data.
+	 * Therefore it is always set when there are active feeds (chan_count > 0)
+	 * or recording is active (vendor hybrid architecture).
 	 *
-	 * TS_RECORDER_SELECT: sadece DVR kaydı (record=true) gerektirir.
-	 *   0 = AsyncFIFO bypass (section-only mod)
-	 *   1 = AsyncFIFO → DVR kayıt
+	 * TS_RECORDER_SELECT: only DVR recording (record=true) requires it.
+	 *   0 = AsyncFIFO bypass (section-only mode)
+	 *   1 = AsyncFIFO → DVR recording
 	 */
 	bool ts_en = (dmx->chan_count > 0) || record;
 	/* Vendor devmem: section-only=0xC0000550, DVR=0xC3C00750
@@ -676,7 +676,7 @@ static void dmx_enable(struct aml_dmx *dmx)
 		      KEEP_DUPLICATE_PACKAGE                      |
 		      STB_DEMUX_ENABLE                            |
 		      (record  ? VIDEO2_FOR_RECORDER_STREAM  : 0u));
-	/* HW/SW path seçimi: sf_mode=true → BYPASS (raw TS → swfilter)
+	/* HW/SW path selection: sf_mode=true → BYPASS (raw TS → swfilter)
 	 *                     sf_mode=false → HW section DMA */
 	if (dmx->sf_mode) {
 		aml_write_reg(dvb, DEMUX_MEM_REQ_EN(dmx->id), AML_MEM_REQ_EN_SW);
@@ -714,12 +714,12 @@ int aml_dvb_start_feed(struct dvb_demux_feed *feed)
 	if (ret < 0) { pm_runtime_put_noidle(dvb->dev); return ret; }
 
 	if (feed->type == DMX_TYPE_SEC) {
-		/* HW veya SW section filter path */
+		/* HW or SW section filter path */
 		if (!sf_feed_sf(dmx, feed, 1)) {
-			/* SW fallback — 32 slot dolu veya force_sec_sf */
+			/* SW fallback — 32 slots full or force_sec_sf */
 			sf_add_feed(dmx, feed);
 			atomic_inc(&dvb->feed_count);
-			feed->priv = (void *)-1L;	/* SW path işareti */
+			feed->priv = (void *)-1L;	/* SW path marker */
 			pm_runtime_mark_last_busy(dvb->dev);
 			pm_runtime_put_autosuspend(dvb->dev);
 			dev_info(dvb->dev, "dmx%d: PID=0x%04x → SW filter\n",
@@ -788,7 +788,7 @@ int aml_dvb_stop_feed(struct dvb_demux_feed *feed)
 		 dmx->id, feed->pid, cid);
 
 	if (feed->type == DMX_TYPE_SEC) {
-		/* SW path işareti */
+		/* SW path marker */
 		if ((long)feed->priv == -1L) {
 			sf_remove_feed(dmx, feed);
 			atomic_dec(&dvb->feed_count);
@@ -975,8 +975,8 @@ int aml_dmx_set_source(struct aml_dmx *dmx, unsigned int source)
 		u32 stb = 0;
 
 		aml_write_reg(dvb, FEC_INPUT_CONTROL(dmx->id), fec);
-		/* STB_TOP_CONFIG: vendor = 0x00000000, yazılmıyor */
-		dev_info(dvb->dev, "dmx%d: kaynak=%d STB_TOP=0x00000000 FEC_CTRL=0x%08x\n",
+		/* STB_TOP_CONFIG: vendor = 0x00000000, not written */
+		dev_info(dvb->dev, "dmx%d: source=%d STB_TOP=0x00000000 FEC_CTRL=0x%08x\n",
 			 dmx->id, source, fec);
 		dev_info(dvb->dev, "Demux %d <- tsin_%c (AML_TS_SRC_FRONTEND_TS%d)\n",
 			 dmx->id, 'a' + p, p);
@@ -985,7 +985,7 @@ int aml_dmx_set_source(struct aml_dmx *dmx, unsigned int source)
 }
 EXPORT_SYMBOL_GPL(aml_dmx_set_source);
 
-/* Stub'lar — geriye uyumluluk */
+/* Stubs — backwards compatibility */
 void aml_dmx_enable_recording(struct aml_dmx *dmx, bool enable)
 {
 	dev_dbg(dmx->dvb->dev, "dmx%d: enable_recording(%d) managed by stop_feed\n",

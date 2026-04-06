@@ -67,7 +67,7 @@ static int aml_dsc_set_key(struct aml_dsc *dsc, int chan,
 
 /*
  * CA_SET_DESCR_EX — CSA/AES/DES/SM4 extended key set
- * Şu an CSA (8-byte CW) destekli, AES/DES/SM4 için stub.
+ * Currently CSA (8-byte CW) is supported; AES/DES/SM4 are stubs.
  */
 static int aml_dsc_set_descr_ex(struct aml_dsc *dsc,
                  const struct ca_descr_ex *dx)
@@ -87,7 +87,7 @@ static int aml_dsc_set_descr_ex(struct aml_dsc *dsc,
         odd = true;
         break;
     default:
-        /* AES/DES/SM4 — donanım doğrudan desteklemiyor, yoksay */
+        /* AES/DES/SM4 — hardware does not directly support these, ignore */
         dev_dbg(dvb->dev, "dsc%d: CA_SET_DESCR_EX type=%d (not HW-supported)\n",
             dsc->id, dx->type);
         return 0;
@@ -145,8 +145,8 @@ static int aml_dsc_ioctl(struct file *file, unsigned int cmd, void *parg)
     }
     case CA_SC2_SET_DESCR_EX: {
         /*
-         * SC2 (S905D3+) genişletilmiş CA — bu SoC'ta donanım yok.
-         * Userspace'e -ENODEV dön ki fallback yapabilsin.
+         * SC2 (S905D3+) extended CA — hardware not present on this SoC.
+         * Return -ENODEV to userspace so it can fall back.
          */
         dev_dbg(dsc->dvb->dev, "dsc%d: CA_SC2_SET_DESCR_EX (not supported on SM1)\n",
             dsc->id);

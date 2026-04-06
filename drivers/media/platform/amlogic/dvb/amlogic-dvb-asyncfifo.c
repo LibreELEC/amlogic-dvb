@@ -27,7 +27,7 @@ static inline u32 ring_avail(struct aml_asyncfifo *afifo)
 static inline void ring_consume(struct aml_asyncfifo *afifo, u32 chunks)
 {
     u32 new_tail = (READ_ONCE(afifo->tail) + chunks) & RING_MASK(afifo);
-    /* smp_store_release: tail güncellemesi DMA okumalarından sonra görünür */
+    /* smp_store_release: tail update becomes visible after DMA reads */
     smp_store_release(&afifo->tail, new_tail);
 }
 
@@ -56,11 +56,11 @@ static void aml_asyncfifo_update_irq_threshold(struct aml_asyncfifo *afifo)
 		afifo->irq_threshold = new_thresh;
 
 		/*
-		 * IRQ threshold REG3 (+0x0C) bit[15:0] alanında.
-		 * 128-byte blok sayısı olarak verilir.
+		 * IRQ threshold is in REG3 (+0x0C) bit[15:0] field.
+		 * Specified as a 128-byte block count.
 		 */
 		thresh_val = min_t(u32, new_thresh >> 7, 0xFFFF);
-		thresh_val |= AFIFO_IRQ_EN;   /* BIT21: IRQ arm korunmalı */
+		thresh_val |= AFIFO_IRQ_EN;   /* BIT21: IRQ arm must be preserved */
 		aml_write_async(dvb, ASYNC_FIFO_REG3(afifo->id), thresh_val);
 
 		dev_dbg(dvb->dev, "afifo%d: irq_threshold=%u thresh_val=0x%x\n",
@@ -111,28 +111,28 @@ static void aml_asyncfifo_poll_work(struct work_struct *work)
         dmx = &dvb->demux[afifo->source];
 
         /*
-         * V2.60: DVR path — vendor dvr_process_channel mantığı.
+         * V2.60: DVR path — vendor dvr_process_channel logic.
          *
-         * HW section filter (SEC_BUFF_READY IRQ) ve DVR recorder path
-         * (TS_RECORDER_ENABLE) birbirinden bağımsızdır:
+         * HW section filter (SEC_BUFF_READY IRQ) and DVR recorder path
+         * (TS_RECORDER_ENABLE) are independent:
          *   - Section PAT/PMT/SDT → SEC_BUFF DMA → dmx IRQ → process_section()
-         *   - Raw TS → AFIFO DMA → AFIFO IRQ → bu fonksiyon → cb.ts()
+         *   - Raw TS → AFIFO DMA → AFIFO IRQ → this function → cb.ts()
          *
-         * DVR feed varsa doğrudan cb.ts() ile ilet.
-         * DVR feed yoksa (sadece section feed): chunk'ı atla.
+         * If DVR feed exists, deliver directly via cb.ts().
+         * If no DVR feed (section feed only): skip the chunk.
          */
         /*
-         * V2.60: Çift path desteği
+         * V2.60: Dual path support
          *   sf_mode=true  → dvb_dmx_swfilter() (SW section/PES filter)
          *   sf_mode=false → cb.ts() (DVR recorder, raw TS)
          */
         if (dmx->sf_mode) {
-            /* SW filter path — raw TS tümünü sw filtreye gönder */
+            /* SW filter path — send all raw TS to sw filter */
             dvb_dmx_swfilter(&dmx->demux, buf, len);
             dev_dbg(dvb->dev, "afifo%d: SW filter chunk=%zu\n",
                     afifo->id, len);
         } else {
-            /* DVR path — cb.ts() ile ilet */
+            /* DVR path — deliver via cb.ts() */
             int i;
             bool delivered = false;
             for (i = 0; i < AML_CHANNEL_COUNT; i++) {
@@ -165,23 +165,23 @@ static void aml_asyncfifo_poll_work(struct work_struct *work)
 
 out:
     /*
-     * Race condition düzeltmesi:
-     * atomic_set(&pending, 0) ÖNCE yapılmalı, ring_avail kontrolü SONRA.
+     * Race condition fix:
+     * atomic_set(&pending, 0) MUST be done FIRST, ring_avail check AFTER.
      *
-     * Yanlış sıra:
-     *   1. ring_avail() == 0 → döngü bitişi
-     *   2. IRQ gelir → pending=1, work kuyruğa eklenir
-     *   3. atomic_set(pending, 0) → IRQ'dan gelen 1 silinir
-     *   → Work tekrar kuyruğa girmez, yeni veri işlenmez! ←
+     * Wrong order:
+     *   1. ring_avail() == 0 → loop ends
+     *   2. IRQ arrives → pending=1, work queued
+     *   3. atomic_set(pending, 0) → clears the 1 from IRQ
+     *   → Work does not re-enter the queue, new data is not processed! ←
      *
-     * Doğru sıra:
-     *   1. atomic_set(pending, 0)  ← pending'i temizle
-     *   2. ring_avail() > 0 → hâlâ veri var → pending=1 + yeniden kuyruğa ekle
-     *   Eğer 1 ile 2 arasında IRQ gelirse → pending 1 olur → koşul sağlanmaz
-     *   ama work zaten IRQ tarafından kuyruğa eklenmiştir. Güvenli.
+     * Correct order:
+     *   1. atomic_set(pending, 0)  ← clear pending
+     *   2. ring_avail() > 0 → still data → pending=1 + re-queue
+     *   If IRQ arrives between 1 and 2 → pending becomes 1 → condition
+     *   is not met but work has already been queued by the IRQ. Safe.
      */
     atomic_set(&afifo->pending, 0);
-    smp_mb();   /* memory barrier: pending=0 store'u ring_avail okumadan önce görünür */
+    smp_mb();   /* memory barrier: pending=0 store becomes visible before ring_avail read */
 
     if (ring_avail(afifo) > 0 && !atomic_xchg(&afifo->pending, 1))
         queue_work_on(afifo->cpu, system_highpri_wq,
@@ -242,8 +242,8 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 		}
 
 		afifo->irq_threshold_min = AML_ASYNC_FLUSH_SIZE;
-		/* threshold_max, ring boyutunun yarısını geçemez.
-		 * flush_size * 4 > buf_size/2 olursa IRQ hiç tetiklenmez. */
+		/* threshold_max must not exceed half the ring size.
+		 * If flush_size * 4 > buf_size/2, IRQ will never fire. */
 		afifo->irq_threshold_max = min_t(size_t,
 						 AML_ASYNC_FLUSH_SIZE * 4,
 						 afifo->buf_size / 2);
@@ -252,7 +252,7 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 
 		INIT_WORK(&afifo->poll_work, aml_asyncfifo_poll_work);
 
-		/* DMA ring buffer tahsis et */
+		/* Allocate DMA ring buffer */
 		dev_info(dvb->dev, "afifo%d: allocating coherent buffer (%zu bytes)\n",
 			 i, afifo->buf_size);
 		afifo->buf_virt = dma_alloc_coherent(dvb->dev,
@@ -268,30 +268,30 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 			 i, afifo->buf_virt, &afifo->buf_addr);
 
 		/*
-		 * Vendor async_fifo_set_regs() sırası (c_stb_define.h bit tanımları):
+		 * Vendor async_fifo_set_regs() order (c_stb_define.h bit definitions):
 		 *
-		 * REG0 (+0x00): DMA başlangıç adresi
-		 * REG1 (+0x04): FLUSH kontrolü
-		 *   bit22 = ASYNC_FIFO_RESET   (pulse — önce set, sonra temizle)
+		 * REG0 (+0x00): DMA start address
+		 * REG1 (+0x04): FLUSH control
+		 *   bit22 = ASYNC_FIFO_RESET   (pulse — set first, then clear)
 		 *   bit21 = ASYNC_FIFO_WRAP_EN (ring buffer wrap)
-		 *   bit20 = ASYNC_FIFO_FLUSH_EN (flush aktif — bu olmadan IRQ gelmez)
-		 *   bit[14:0] = ASYNC_FIFO_FLUSH_CNT (128-byte blok sayısı = size>>7)
-		 * REG2 (+0x08): FILL kontrolü
+		 *   bit20 = ASYNC_FIFO_FLUSH_EN (flush active — without this, no IRQ)
+		 *   bit[14:0] = ASYNC_FIFO_FLUSH_CNT (128-byte block count = size>>7)
+		 * REG2 (+0x08): FILL control
 		 *   bit[24:23] = ASYNC_FIFO_SOURCE (DMX0=3, DMX1=2, DMX2=0)
 		 *   bit[22:21] = ASYNC_FIFO_ENDIAN (1)
 		 *   bit20 = ASYNC_FIFO_FILL_EN
-		 * REG3 (+0x0C): IRQ threshold (128-byte blok sayısı)
+		 * REG3 (+0x0C): IRQ threshold (128-byte block count)
 		 *
-		 * FIFO[0] → 0xFFD0A000 (ana kanal, aktif)
-		 * FIFO[1] → 0xFFD09000 (ikincil, idle)
+		 * FIFO[0] → 0xFFD0A000 (primary channel, active)
+		 * FIFO[1] → 0xFFD09000 (secondary, idle)
 		 *
-		 * devmem doğrulaması: CoreELEC'te REG1=0x80301000
-		 *   bit31 = FLUSH_STATUS (RO, veri akıyor)
+		 * devmem verification: CoreELEC REG1=0x80301000
+		 *   bit31 = FLUSH_STATUS (RO, data is flowing)
 		 *   bit21 = WRAP_EN ✓  bit20 = FLUSH_EN ✓  FLUSH_CNT=0x1000
 		 */
-		/* Tüm FIFO'lar eşit başlatılır — ikinci frontend için afifo1 lazım */
+		/* All FIFOs are initialised equally — afifo1 is needed for the second frontend */
 
-		/* ADIM 1: REG0 — DMA ring buffer başlangıç adresi */
+		/* STEP 1: REG0 — DMA ring buffer start address */
 		ret = aml_write_async(dvb, ASYNC_FIFO_REG0(i), afifo->buf_addr);
 		if (ret) {
 			dev_err(dvb->dev, "afifo%d: REG0 write failed: %d\n", i, ret);
@@ -300,29 +300,29 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 		dev_info(dvb->dev, "afifo%d: REG0 (DMA addr) = 0x%08x\n", i,
 			 (u32)afifo->buf_addr);
 
-		/* ADIM 2: REG1 — RESET pulse: RESET|WRAP_EN|FLUSH_CNT */
+		/* STEP 2: REG1 — RESET pulse: RESET|WRAP_EN|FLUSH_CNT */
 		{
 			/*
-			 * V2.18 KRİTİK DÜZELTME: FLUSH_CNT birimi 128 BYTE'tır, 1KB DEĞİL!
+			 * V2.18 CRITICAL FIX: FLUSH_CNT unit is 128 BYTES, NOT 1KB!
 			 *
-			 * SM1 cihaz devmem kanıtı (V2.17 çalışma anında):
-			 *   flush_cnt = 512 (buf_size >> 10) yazıldığında
-			 *   WR_PTR HİÇBİR ZAMAN 64KB'yi geçmedi (22 ölçümün tamamı 0-63KB içinde).
-			 *   512 × 128B = 64KB  ← gözlemle TAM EŞLEŞME ✓
-			 *   512 × 1KB  = 512KB ← EŞLEŞMIYORDU ✗
+			 * SM1 device devmem evidence (V2.17 at runtime):
+			 *   When flush_cnt = 512 (buf_size >> 10) was written,
+			 *   WR_PTR NEVER exceeded 64KB (all 22 measurements within 0-63KB).
+			 *   512 × 128B = 64KB  ← EXACT MATCH with observation ✓
+			 *   512 × 1KB  = 512KB ← DID NOT MATCH ✗
 			 *
-			 * Bug etkisi (V2.17):
+			 * Bug impact (V2.17):
 			 *   HW ring = 64KB, SW ring_entries = 8 (8×64KB = 512KB).
-			 *   Sadece slot 0 (0-64KB) gerçek TS verisi alıyordu.
-			 *   Slot 1-7 (64KB-512KB): sıfır/çöp → swfilter section bulamıyor.
-			 *   Efektif veri penceresi: 8 IRQ'da 1 kez → PAT kısmen çalışıyor,
-			 *   PMT/SDT/NIT zaman aşımına uğruyordu.
+			 *   Only slot 0 (0-64KB) received real TS data.
+			 *   Slot 1-7 (64KB-512KB): zeros/garbage → swfilter found no sections.
+			 *   Effective data window: 1 in 8 IRQs → PAT partially working,
+			 *   PMT/SDT/NIT were timing out.
 			 *
-			 * Doğru formül: buf_size >> 7
+			 * Correct formula: buf_size >> 7
 			 *   512KB / 128B = 4096 = 0x1000 → ring = 4096 × 128B = 512KB ✓
 			 *
-			 * V2.08 "1KB birim" gözlemi muhtemelen farklı SoC (GXL/GXM) içindi.
-			 * SM1 (S905X3) için birim 128 byte olduğu devmem ölçümüyle doğrulandı.
+			 * V2.08 "1KB unit" observation was probably for a different SoC (GXL/GXM).
+			 * Verified by devmem measurement that the unit is 128 bytes for SM1 (S905X3).
 			 */
 			u32 flush_cnt = (afifo->buf_size >> 7) & 0x7FFF;
 
@@ -331,11 +331,11 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 			dev_info(dvb->dev, "afifo%d: REG1 reset pulse = 0x%08x (flush_cnt=0x%x)\n",
 				 i, ctrl_val, flush_cnt);
 
-			/* RESET bitini temizle */
+			/* Clear the RESET bit */
 			ctrl_val &= ~AFIFO_RESET;
 			aml_write_async(dvb, ASYNC_FIFO_REG1(i), ctrl_val);
 
-			/* FLUSH_EN set et — bu olmadan IRQ tetiklenmiyor */
+			/* Set FLUSH_EN — without this, IRQ does not fire */
 			ctrl_val |= AFIFO_FLUSH_EN;
 			ret = aml_write_async(dvb, ASYNC_FIFO_REG1(i), ctrl_val);
 			if (ret) {
@@ -347,31 +347,31 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 				 i, ctrl_val);
 		}
 
-		/* ADIM 3: REG2 — init'te FILL_EN YOK, source da yok.
-		 * FILL_EN sadece aml_asyncfifo_set_source() çağrısında açılır.
-		 * Burada FILL_EN set edilirse source=0(dmx0) default olur →
-		 * asyncfifo0 ve asyncfifo1 aynı kaynaktan beslenir. */
+		/* STEP 3: REG2 — no FILL_EN at init, no source either.
+		 * FILL_EN is only enabled in the aml_asyncfifo_set_source() call.
+		 * If FILL_EN were set here, source=0(dmx0) would be the default →
+		 * asyncfifo0 and asyncfifo1 would be fed from the same source. */
 		aml_write_async(dvb, ASYNC_FIFO_REG2(i), 0);
 		dev_info(dvb->dev, "afifo%d: REG2 (FILL_EN off, no src) = 0x00000000\n", i);
 
-		/* ADIM 4: REG3 — IRQ threshold + AFIFO_IRQ_EN (BIT21)
+		/* STEP 4: REG3 — IRQ threshold + AFIFO_IRQ_EN (BIT21)
 		 *
-		 * V2.17 KRITIK DÜZELTME: BIT21 (AFIFO_IRQ_EN) OLMADAN IRQ HİÇ TETİKLENMİYOR!
+		 * V2.17 CRITICAL FIX: WITHOUT BIT21 (AFIFO_IRQ_EN), IRQ NEVER FIRES!
 		 *
-		 * Kanıt (cihaz devmem):
+		 * Evidence (device devmem):
 		 *   - Idle FIFO[1] REG3 = 0x00200000 (BIT21=1, hardware reset default)
-		 *   - Vendor aktif FIFO  REG3 = 0x002007FF (BIT21=1 + threshold=0x7FF)
-		 *   - V2.16: sadece 0x7FF yazıldı (BIT21=0) → WR_PTR hareket etmesine
-		 *     rağmen IRQ hiç gelmedi → poll_work çalışmadı → PAT/PMT sıfır
+		 *   - Vendor active FIFO  REG3 = 0x002007FF (BIT21=1 + threshold=0x7FF)
+		 *   - V2.16: only 0x7FF was written (BIT21=0) → despite WR_PTR moving,
+		 *     IRQ never arrived → poll_work did not run → PAT/PMT zero
 		 *
-		 * REG3 birimi 128 byte: 64KB / 128 - 1 = 511 = 0x1FF
-		 * BIT21 ile birlikte: 0x002001FF
+		 * REG3 unit is 128 bytes: 64KB / 128 - 1 = 511 = 0x1FF
+		 * Combined with BIT21: 0x002001FF
 		 */
 		{
 			u32 irq_thresh = (afifo->flush_size >> 7) - 1;
 
 			irq_thresh = min_t(u32, irq_thresh, 0x7FFF);
-			irq_thresh |= AFIFO_IRQ_EN;   /* BIT21: IRQ arm — OLMADAN IRQ gelmez! */
+			irq_thresh |= AFIFO_IRQ_EN;   /* BIT21: IRQ arm — without this, no IRQ! */
 			aml_write_async(dvb, ASYNC_FIFO_REG3(i), irq_thresh);
 			dev_info(dvb->dev, "afifo%d: REG3 (IRQ thresh) = 0x%06x (every %zuKB)\n",
 				 i, irq_thresh, afifo->flush_size / 1024);
@@ -420,7 +420,7 @@ void aml_asyncfifo_release(struct aml_dvb *dvb)
 
 		dev_dbg(dvb->dev, "afifo%d: releasing\n", i);
 		cancel_work_sync(&afifo->poll_work);
-		/* FIFO'yu durdur: FLUSH_EN ve FILL_EN temizle */
+		/* Stop the FIFO: clear FLUSH_EN and FILL_EN */
 		aml_write_async(dvb, ASYNC_FIFO_REG1(i), 0);
 		aml_write_async(dvb, ASYNC_FIFO_REG2(i), 0);
 		dma_free_coherent(dvb->dev, afifo->buf_size,
@@ -449,7 +449,7 @@ int aml_asyncfifo_set_source(struct aml_asyncfifo *afifo, unsigned int source)
 	src_val = (source < ARRAY_SIZE(src_map)) ? src_map[source] : 0;
 
 	/* REG2: SOURCE[24:23] | ENDIAN | FILL_EN
-	 * Kaynak bağlantısını değiştir, FILL_EN ve ENDIAN sabit kalır */
+	 * Change source connection, FILL_EN and ENDIAN remain unchanged */
 	reg2 = AFIFO_SOURCE(src_val) | AFIFO_ENDIAN_VAL | AFIFO_FILL_EN;
 	dev_info(dvb->dev, "afifo%d: REG2 source=%u val=%u reg2=0x%08x\n",
 		 afifo->id, source, src_val, reg2);
@@ -466,14 +466,14 @@ irqreturn_t aml_asyncfifo_irq_handler(int irq, void *dev_id)
 	dev_dbg(dvb->dev, "afifo%d: IRQ fired! irq=%d\n", afifo->id, irq);
 
 	/*
-	 * Delta yaklaşımı — en güvenli yöntem.
+	 * Delta approach — safest method.
 	 *
-	 * abs_chunk = WR_PTR ring içindeki anlık pozisyon (0..ring_entries-1).
-	 * prev_chunk = bir önceki IRQ'daki abs_chunk.
-	 * delta = kaç yeni chunk doldu (wrap-safe).
+	 * abs_chunk = WR_PTR instantaneous position within the ring (0..ring_entries-1).
+	 * prev_chunk = abs_chunk from the previous IRQ.
+	 * delta = how many new chunks have been filled (wrap-safe).
 	 *
-	 * head monoton artan tam sayıdır (asla maskelenmez).
-	 * ring_avail = (head - tail) & RING_MASK → her zaman doğru.
+	 * head is a monotonically increasing integer (never masked).
+	 * ring_avail = (head - tail) & RING_MASK — always correct.
 	 */
 	if (aml_read_async(dvb, ASYNC_FIFO_WR_PTR(afifo->id), &wr_ptr) == 0) {
 		u32 ring_mask  = afifo->ring_entries - 1;
@@ -484,7 +484,7 @@ irqreturn_t aml_asyncfifo_irq_handler(int irq, void *dev_id)
 		u32 prev_abs   = READ_ONCE(afifo->prev_chunk);
 		u32 delta      = (abs_chunk - prev_abs) & ring_mask;
 
-		/* En az 1 yeni chunk garanti et */
+		/* Guarantee at least 1 new chunk */
 		if (delta == 0)
 			delta = 1;
 

@@ -2,14 +2,14 @@
 /*
  * Amlogic DVB Frontend Platform Glue
  *
- * MİMARİ: avl6862_probe() frontend'i kendisi kayıt eder.
+ * ARCHITECTURE: avl6862_probe() registers the frontend itself.
  *
- * Platform probe olunca kendini global listeye ekler.
- * avl6862_probe() → aml_dvb_find_by_fe_node() ile adapter'ı bulur
- *                 → dvb_register_frontend() çağırır.
+ * When platform probe occurs, it adds itself to the global list.
+ * avl6862_probe() → finds the adapter via aml_dvb_find_by_fe_node()
+ *                 → calls dvb_register_frontend().
  *
- * Modül yükleme sırası bağımsız: platform önce yüklenirse liste hazır,
- * avl6862 önce yüklenirse -EPROBE_DEFER döner ve kernel tekrar dener.
+ * Module loading order is independent: if platform loads first, the list is ready;
+ * if avl6862 loads first, it returns -EPROBE_DEFER and the kernel retries.
  */
 
 #include <linux/module.h>
@@ -20,21 +20,21 @@
 #include <linux/delay.h>
 #include <linux/pm_runtime.h>
 #include "amlogic_dvb.h"
-#include "amlogic-dvb-hwops.h"   // <-- EKLENDİ: hwops yapısının tanımı için
+#include "amlogic-dvb-hwops.h"   // <-- ADDED: for hwops struct definition
 
-/* ── Global DVB adapter listesi ─────────────────────────────────────── */
+/* ── Global DVB adapter list ───────────────────────────────────────── */
 
 struct aml_dvb_entry {
 	struct aml_dvb   *dvb;
 	struct list_head  node;
 };
 
-#define MAX_DVB_ADAPTERS 4	/* Sistemde olabilecek max DVB platform adapter */
+#define MAX_DVB_ADAPTERS 4	/* Max DVB platform adapters in the system */
 
 static LIST_HEAD(aml_dvb_list);
 static DEFINE_MUTEX(aml_dvb_list_lock);
 
-/* Platform probe tamamlanınca çağrılır */
+/* Called when platform probe completes */
 void aml_dvb_list_add(struct aml_dvb *dvb)
 {
 	struct aml_dvb_entry *entry;
@@ -51,7 +51,7 @@ void aml_dvb_list_add(struct aml_dvb *dvb)
 }
 EXPORT_SYMBOL_GPL(aml_dvb_list_add);
 
-/* Platform remove'da çağrılır */
+/* Called during platform remove */
 void aml_dvb_list_del(struct aml_dvb *dvb)
 {
 	struct aml_dvb_entry *entry, *tmp;
@@ -69,11 +69,11 @@ void aml_dvb_list_del(struct aml_dvb *dvb)
 EXPORT_SYMBOL_GPL(aml_dvb_list_del);
 
 /**
- * aml_dvb_find_by_fe_node - fe_node'u dvb-frontends listesinde içeren
- *                            adapter'ı ve fe_idx'i döndürür.
+ * aml_dvb_find_by_fe_node - Returns the adapter and fe_idx that contains
+ *                            fe_node in the dvb-frontends list.
  *
- * of_parse_phandle() sleeping olabileceğinden mutex dışında çağrılır.
- * Liste snapshot'ı mutex altında alınır, OF işlemleri dışında yapılır.
+ * Called outside mutex as of_parse_phandle() may sleep.
+ * List snapshot is taken under mutex; OF operations are done outside it.
  */
 static struct aml_dvb *aml_dvb_find_by_fe_node(struct device_node *fe_node,
 						int *fe_idx_out)
@@ -81,7 +81,7 @@ static struct aml_dvb *aml_dvb_find_by_fe_node(struct device_node *fe_node,
 	struct aml_dvb_entry *entry;
 	struct aml_dvb *found = NULL;
 
-	/* Snapshot: listedeki tüm dvb pointer'larını kopyala */
+	/* Snapshot: copy all dvb pointers from the list */
 	struct aml_dvb *adapters[MAX_DVB_ADAPTERS];
 	int nadapters = 0, i, j;
 
@@ -92,7 +92,7 @@ static struct aml_dvb *aml_dvb_find_by_fe_node(struct device_node *fe_node,
 	}
 	mutex_unlock(&aml_dvb_list_lock);
 
-	/* OF işlemleri mutex dışında — sleeping güvenli */
+	/* OF operations outside mutex — safe to sleep */
 	for (i = 0; i < nadapters && !found; i++) {
 		struct aml_dvb *dvb = adapters[i];
 		struct device_node *np = dvb->dev->of_node;
@@ -113,18 +113,18 @@ static struct aml_dvb *aml_dvb_find_by_fe_node(struct device_node *fe_node,
 	return found;
 }
 
-/* ── TS kaynak yönlendirme (artık ayrı okuma + uygulama) ───────────── */
+/* ── TS source routing (now separate read + apply) ───────────── */
 
 /**
- * aml_dvb_get_ts_source - DTS'den ts-source ve ts-port değerlerini okur,
- *                          geçerli değerleri hesaplar.
- * @dvb: aml_dvb yapısı
+ * aml_dvb_get_ts_source - Reads ts-source and ts-port values from DTS,
+ *                          calculates valid values.
+ * @dvb: aml_dvb structure
  * @np: frontend device_node
- * @fe_idx: frontend index (0'dan başlayan)
- * @ts_demux_out: hangi demux'un kullanılacağı (çıktı)
- * @ts_port_out: hangi fiziksel TS portunun kullanılacağı (çıktı)
+ * @fe_idx: frontend index (zero-based)
+ * @ts_demux_out: which demux to use (output)
+ * @ts_port_out: which physical TS port to use (output)
  *
- * Dönen değer: 0 başarı, negatif hata
+ * Return value: 0 success, negative error
  */
 static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
 				  int fe_idx, u32 *ts_demux_out, u32 *ts_port_out)
@@ -132,7 +132,7 @@ static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
 	u32 ts_demux, ts_port;
 	int ret;
 
-	/* ts-source: hangi demux kullanılacak (0,1,2) */
+	/* ts-source: which demux to use (0,1,2) */
 	ret = of_property_read_u32(np, "ts-source", &ts_demux);
 	if (ret) {
 		ts_demux = fe_idx % dvb->caps.num_demux;
@@ -145,10 +145,10 @@ static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
 		ts_demux = 0;
 	}
 
-	/* ts-port: fiziksel TS input port (0=tsin_a, 1=tsin_b, ...) */
+	/* ts-port: physical TS input port (0=tsin_a, 1=tsin_b, ...) */
 	ret = of_property_read_u32(np, "ts-port", &ts_port);
 	if (ret) {
-		/* Eski DTS uyumluluğu: port = demux index */
+		/* Legacy DTS compatibility: port = demux index */
 		ts_port = ts_demux;
 		dev_info(dvb->dev, "Frontend %d: no ts-port, using demux index (%d)\n",
 			 fe_idx, ts_port);
@@ -165,10 +165,10 @@ static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
 }
 
 /**
- * aml_dvb_apply_ts_source - Verilen demux ve port değerlerini donanıma uygular.
- * @dvb: aml_dvb yapısı
- * @ts_demux: hangi demux
- * @ts_port: hangi fiziksel TS port
+ * aml_dvb_apply_ts_source - Applies the given demux and port values to hardware.
+ * @dvb: aml_dvb structure
+ * @ts_demux: which demux
+ * @ts_port: which physical TS port
  */
 static void aml_dvb_apply_ts_source(struct aml_dvb *dvb, u32 ts_demux, u32 ts_port)
 {
@@ -179,17 +179,17 @@ static void aml_dvb_apply_ts_source(struct aml_dvb *dvb, u32 ts_demux, u32 ts_po
 		 ts_demux, 'a' + ts_port, ts_port);
 }
 
-/* ── avl6862_probe() tarafından çağrılır ────────────────────────────── */
+/* ── Called by avl6862_probe() ──────────────────────────────────────── */
 
 /**
- * aml_dvb_register_frontend - demod probe'undan frontend kayıt
- * @fe_node: demod'un DTS node'u
- * @fe:      hazır dvb_frontend (tuner bağlı)
+ * aml_dvb_register_frontend - Register frontend from demod probe
+ * @fe_node: demod's DTS node
+ * @fe:      ready dvb_frontend (tuner attached)
  *
- * Dönen değer:
- *  0          - başarılı
- * -EPROBE_DEFER - platform henüz hazır değil, kernel tekrar dener
- *  diğer      - hata
+ * Return value:
+ *  0          - success
+ * -EPROBE_DEFER - platform not yet ready, kernel retries
+ *  other      - error
  */
 int aml_dvb_register_frontend(struct device_node *fe_node,
 			       struct dvb_frontend *fe,
@@ -210,7 +210,7 @@ int aml_dvb_register_frontend(struct device_node *fe_node,
 		return -EPROBE_DEFER;
 	}
 
-	/* Runtime PM: cihazı uyandır (register yazma için gerekli) */
+	/* Runtime PM: wake device (needed for register writes) */
 	ret = pm_runtime_get_sync(dvb->dev);
 	if (ret < 0) {
 		dev_err(dvb->dev, "Failed to get runtime PM: %d\n", ret);
@@ -233,14 +233,14 @@ int aml_dvb_register_frontend(struct device_node *fe_node,
 
 	dvb->frontend[fe_idx] = fe;
 	if (client) {
-		/* I2C client referansını sakla — /proc/bus/nim_sockets için */
+		/* Save I2C client reference — for /proc/bus/nim_sockets */
 		get_device(&client->dev);
 		dvb->demod_client[fe_idx] = client;
 	}
 	if (fe_idx + 1 > dvb->num_frontend)
 		dvb->num_frontend = fe_idx + 1;
 
-	/* TS source ayarı: DTS'den oku ve uygula */
+	/* TS source configuration: read from DTS and apply */
 	ret = aml_dvb_get_ts_source(dvb, fe_node, fe_idx, &ts_demux, &ts_port);
 	if (ret) {
 		dev_err(dvb->dev, "Failed to get TS source: %d\n", ret);
@@ -248,7 +248,7 @@ int aml_dvb_register_frontend(struct device_node *fe_node,
 	}
 	aml_dvb_apply_ts_source(dvb, ts_demux, ts_port);
 
-	/* Async FIFO source ayarı (eğer varsa) */
+	/* Async FIFO source configuration (if available) */
 	if (ts_demux < dvb->caps.num_asyncfifo) {
 		ret = aml_asyncfifo_set_source(&dvb->asyncfifo[ts_demux], ts_demux);
 		if (ret)
@@ -261,7 +261,7 @@ int aml_dvb_register_frontend(struct device_node *fe_node,
 		dev_dbg(dvb->dev, "No async FIFO for demux %d\n", ts_demux);
 	}
 
-	/* TS clock ayarı (54 MHz paralel mod için) */
+	/* TS clock configuration (for 54 MHz parallel mode) */
 	if (dvb->hwops && dvb->hwops->set_ts_rate) {
 		dvb->hwops->set_ts_rate(dvb, 54000);
 		dev_info(dvb->dev, "TS rate set to 54 Mbps\n");
@@ -280,11 +280,11 @@ out_pm_put:
 EXPORT_SYMBOL_GPL(aml_dvb_register_frontend);
 
 /**
- * aml_dvb_unregister_frontend - avl6862_remove() tarafından çağrılır
- * @fe_node: demod'un DTS node'u
+ * aml_dvb_unregister_frontend - Called by avl6862_remove()
+ * @fe_node: demod's DTS node
  *
- * avl6862 platform'dan önce kaldırılırsa frontend'i adapter'dan çıkarır.
- * Platform remove'da zaten kaldırıldıysa ikinci çağrı güvenle görmezden gelinir.
+ * If avl6862 is removed before the platform, removes the frontend from the adapter.
+ * If already removed during platform remove, the second call is safely ignored.
  */
 void aml_dvb_unregister_frontend(struct device_node *fe_node)
 {
@@ -296,9 +296,9 @@ void aml_dvb_unregister_frontend(struct device_node *fe_node)
 		return;
 
 	if (!dvb->frontend[fe_idx])
-		return;	/* zaten kaldırılmış */
+		return;	/* already removed */
 
-	/* Runtime PM: kaldırma sırasında da uyanık olmak iyidir */
+	/* Runtime PM: it is good to stay awake during removal too */
 	pm_runtime_get_sync(dvb->dev);
 	dvb_unregister_frontend(dvb->frontend[fe_idx]);
 	dvb->frontend[fe_idx] = NULL;
@@ -306,7 +306,7 @@ void aml_dvb_unregister_frontend(struct device_node *fe_node)
 }
 EXPORT_SYMBOL_GPL(aml_dvb_unregister_frontend);
 
-/* ── Platform probe: adapter'ı listeye ekle ─────────────────────────── */
+/* ── Platform probe: add adapter to list ────────────────────────────── */
 
 int aml_dvb_probe_frontends(struct aml_dvb *dvb)
 {
@@ -315,7 +315,7 @@ int aml_dvb_probe_frontends(struct aml_dvb *dvb)
 	struct device_node *fe_node;
 	int count, i;
 
-	/* Adapter artık hazır — listeye ekle */
+	/* Adapter is now ready — add to list */
 	aml_dvb_list_add(dvb);
 
 	if (!np)
@@ -337,7 +337,7 @@ int aml_dvb_probe_frontends(struct aml_dvb *dvb)
 }
 EXPORT_SYMBOL_GPL(aml_dvb_probe_frontends);
 
-/* ── Platform remove: listeden çıkar ve frontend'leri serbest bırak ── */
+/* ── Platform remove: remove from list and release frontends ────────── */
 
 void aml_dvb_release_frontends(struct aml_dvb *dvb)
 {

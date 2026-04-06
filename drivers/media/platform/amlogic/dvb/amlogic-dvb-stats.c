@@ -38,7 +38,7 @@ void aml_stats_update_error(struct aml_dmx *dmx, int error_type)
 	case 1: u64_stats_inc(&dmx->stats.crc_errors);      break;
 	case 2: u64_stats_inc(&dmx->stats.overflow_errors); break;
 	case 3: u64_stats_inc(&dmx->stats.cc_errors);       break;
-	/* BUG-11: eksik case'ler eklendi */
+	/* BUG-11: missing cases added */
 	case 4: u64_stats_inc(&dmx->stats.fifo_errors);     break;
 	case 5: u64_stats_inc(&dmx->stats.ts_drops);        break;
 	default: break;

@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Amlogic DVB — GPIO ve Pinctrl Yönetimi
+ * Amlogic DVB — GPIO and Pinctrl Management
  *
- * Bu modül iki seviyede GPIO yönetir:
+ * This module manages GPIOs at two levels:
  *
- * 1. Platform seviyesi (platform DTS node):
- *    Sürücü probe'unda tüm GPIO'lar devm ile alınır, consumer name atanır
- *    ve struct aml_dvb_gpio tablosuna eklenir.
- *    Tablo /sys/kernel/debug/<dvb>/gpio ve /sys/kernel/debug/gpio'da görünür.
+ * 1. Platform level (platform DTS node):
+ *    All GPIOs are acquired with devm during driver probe, consumer names are assigned
+ *    and added to the struct aml_dvb_gpio table.
+ *    The table is visible in /sys/kernel/debug/<dvb>/gpio and /sys/kernel/debug/gpio.
  *
- * 2. Frontend seviyesi (I2C client DTS node):
- *    Her frontend probe'unda power/reset sekansı uygulanır.
+ * 2. Frontend level (I2C client DTS node):
+ *    Power/reset sequence is applied during each frontend probe.
  *
- * ── /sys/kernel/debug/gpio çıktısı ──────────────────────────────────────
+ * ── /sys/kernel/debug/gpio output ──────────────────────────────────────
  *  gpio-45 (demod-reset  | amlogic-dvb-demod-reset ) out lo ACTIVE LOW
  *  gpio-46 (demod-power  | amlogic-dvb-demod-power ) out hi
  *  gpio-47 (ant-power    | amlogic-dvb-ant-power   ) out lo
  *  gpio-51 (ts0-data0    | amlogic-dvb-ts0-data0   ) in   -- [PINCTRL]
  *
- * ── /sys/kernel/debug/<dvb>/gpio çıktısı ─────────────────────────────────
- *  # Amlogic DVB GPIO Tablosu
+ * ── /sys/kernel/debug/<dvb>/gpio output ─────────────────────────────────
+ *  # Amlogic DVB GPIO Table
  *  # idx  name                  direction  logical  raw  polarity  consumer
  *    [0]  demod-reset           out        1        0    ACTIVE_LOW amlogic-dvb-demod-reset
  *    [1]  demod-power           out        1        1    ACTIVE_HI  amlogic-dvb-demod-power
  *    [2]  ant-power             out        0        0    ACTIVE_HI  amlogic-dvb-ant-power
  *
- * ── /sys/kernel/debug/<dvb>/pinctrl çıktısı ──────────────────────────────
+ * ── /sys/kernel/debug/<dvb>/pinctrl output ──────────────────────────────
  *  pinctrl device : ff634000.periphs-pinctrl
  *  current state  : default
  *  available states: default parallel s_ts0 s_ts1 p_ts0 p_ts1
@@ -47,52 +47,52 @@
 #include <linux/seq_file.h>
 #include "amlogic_dvb.h"
 
-/* ── Timing sabitleri ─────────────────────────────────────────────────── */
+/* ── Timing constants ─────────────────────────────────────────────────── */
 #define AML_GPIO_PWR_OFF_MS_DEFAULT	200
 #define AML_GPIO_PWR_ON_MS_DEFAULT	200
 #define AML_GPIO_RST_ASSERT_MS_DEFAULT	20
 #define AML_GPIO_RST_RELEASE_MS_DEFAULT	50
 
-/* ── Maksimum GPIO tablo boyutu ────────────────────────────────────────── */
+/* ── Maximum GPIO table size ────────────────────────────────────────── */
 #define AML_MAX_GPIOS  16
 
 /* ── Consumer name prefix ──────────────────────────────────────────────── */
 #define AML_GPIO_PREFIX "amlogic-dvb-"
 
 /* ======================================================================
- * Platform GPIO tanım tablosu
+ * Platform GPIO definition table
  *
- * Her giriş: DTS property adı, GPIOD yön/başlangıç değeri, insan okunabilir
- * açıklama ve consumer etiket soneki.
+ * Each entry: DTS property name, GPIOD direction/initial value, human-readable
+ * description and consumer label suffix.
  * ====================================================================== */
 static const struct {
-	const char *prop;		/* DTS property kökü (xxx-gpios) */
-	enum gpiod_flags flags;		/* başlangıç yönü + değeri */
-	const char *label;		/* kısa insan okunabilir isim */
-	const char *consumer_suffix;	/* /sys/kernel/debug/gpio consumer adı */
-	bool optional;			/* yoksa hata verme */
+	const char *prop;		/* DTS property root (xxx-gpios) */
+	enum gpiod_flags flags;		/* initial direction + value */
+	const char *label;		/* short human-readable name */
+	const char *consumer_suffix;	/* /sys/kernel/debug/gpio consumer name */
+	bool optional;			/* do not error if absent */
 } aml_platform_gpios[] = {
 	/*
-	 * Anten LNA güç anahtarı
+	 * Antenna LNA power switch
 	 * DTS: ant-power-gpios = <&gpio GPIOH_6 GPIO_ACTIVE_HIGH>;
 	 */
 	{ "ant-power",    GPIOD_OUT_LOW,  "ant-power",   "ant-power",   true  },
 
 	/*
-	 * Demodülatör güç (LDO enable)
+	 * Demodulator power (LDO enable)
 	 * DTS: demod-power-gpios = <&gpio GPIOH_3 GPIO_ACTIVE_HIGH>;
 	 */
 	{ "demod-power",  GPIOD_OUT_LOW,  "demod-power", "demod-power", true  },
 
 	/*
-	 * Demodülatör donanım reset
+	 * Demodulator hardware reset
 	 * DTS: demod-reset-gpios = <&gpio GPIOH_4 GPIO_ACTIVE_LOW>;
-	 * ACTIVE_LOW: logic-1 = reset çıkılmış (serbest), logic-0 = reset'te
+	 * ACTIVE_LOW: logic-1 = out of reset (released), logic-0 = held in reset
 	 */
 	{ "demod-reset",  GPIOD_OUT_HIGH, "demod-reset", "demod-reset", true  },
 
 	/*
-	 * Tuner güç
+	 * Tuner power
 	 * DTS: tuner-power-gpios = <&gpio GPIOZ_6 GPIO_ACTIVE_HIGH>;
 	 */
 	{ "tuner-power",  GPIOD_OUT_LOW,  "tuner-power", "tuner-power", true  },
@@ -104,30 +104,30 @@ static const struct {
 	{ "tuner-reset",  GPIOD_OUT_HIGH, "tuner-reset", "tuner-reset", true  },
 
 	/*
-	 * TS çıkış enable (bazı boardlarda mux/buffer enable)
+	 * TS output enable (mux/buffer enable on some boards)
 	 * DTS: ts-out-en-gpios = <&gpio GPIOH_7 GPIO_ACTIVE_HIGH>;
 	 */
 	{ "ts-out-en",    GPIOD_OUT_LOW,  "ts-out-en",   "ts-out-en",   true  },
 
 	/*
-	 * LNB güç enable (DiSEqC uygulamalarında)
+	 * LNB power enable (for DiSEqC implementations)
 	 * DTS: lnb-power-gpios = <&gpio GPIOH_8 GPIO_ACTIVE_HIGH>;
 	 */
 	{ "lnb-power",    GPIOD_OUT_LOW,  "lnb-power",   "lnb-power",   true  },
 
 	/*
-	 * LNB 13V/18V seçim pini
+	 * LNB 13V/18V selection pin
 	 * DTS: lnb-voltage-gpios = <&gpio GPIOH_9 GPIO_ACTIVE_HIGH>;
 	 */
 	{ "lnb-voltage",  GPIOD_OUT_LOW,  "lnb-voltage", "lnb-voltage", true  },
 };
 
 /* ======================================================================
- * aml_gpio_register_one() — Tek GPIO'yu kaydet ve tabloya ekle
+ * aml_gpio_register_one() — Register a single GPIO and add it to the table
  *
  * 1. devm_gpiod_get_optional() ile GPIO'yu al
  * 2. gpiod_set_consumer_name() ile /sys/kernel/debug/gpio consumer ata
- * 3. aml_dvb_gpio tablosuna ekle (debugfs için)
+ * 3. Add to aml_dvb_gpio table (for debugfs)
  * ====================================================================== */
 static int aml_gpio_register_one(struct aml_dvb *dvb,
 				 const char *prop,
@@ -150,28 +150,28 @@ static int aml_gpio_register_one(struct aml_dvb *dvb,
 			return -EPROBE_DEFER;
 		if (!optional)
 			return dev_err_probe(dev, PTR_ERR(gd),
-					     "GPIO '%s' alınamadı\n", prop);
-		/* optional ve hata: uyar, devam et */
-		dev_dbg(dev, "GPIO '%s' bulunamadı (optional, atlandı)\n", prop);
+					     "Failed to acquire GPIO '%s'\n", prop);
+		/* optional and error: warn, continue */
+		dev_dbg(dev, "GPIO '%s' not found (optional, skipped)\n", prop);
 		return 0;
 	}
 
 	if (!gd)
-		return 0; /* optional, DTS'te yok */
+		return 0; /* optional, not in DTS */
 
 	/*
-	 * Consumer name: /sys/kernel/debug/gpio'da görünen "consumer" sütunu.
+	 * Consumer name: the "consumer" column visible in /sys/kernel/debug/gpio.
 	 * Format: "amlogic-dvb-<suffix>"
-	 * Örnek: "amlogic-dvb-demod-reset"
+	 * Example: "amlogic-dvb-demod-reset"
 	 *
-	 * kernel/gpio.c debugfs formatı:
+	 * kernel/gpio.c debugfs format:
 	 *   gpio-N (PIN-NAME | CONSUMER-NAME) DIR VALUE [FLAG]
 	 */
 	snprintf(consumer, sizeof(consumer), "%s%s", AML_GPIO_PREFIX,
 		 consumer_suffix);
 	gpiod_set_consumer_name(gd, consumer);
 
-	/* Tabloya ekle */
+	/* Add to table */
 	idx = dvb->gpio_count;
 	if (idx < AML_MAX_GPIOS) {
 		dvb->gpios[idx].gd       = gd;
@@ -189,15 +189,15 @@ static int aml_gpio_register_one(struct aml_dvb *dvb,
 }
 
 /* ======================================================================
- * aml_gpio_init() — Tüm platform GPIO'larını probe'da kaydet
+ * aml_gpio_init() — Register all platform GPIOs during probe
  *
- * Probe sıralaması:
- *   1. Platform GPIO'ları kaydet (bu fonksiyon)
- *   2. Pinctrl state uygula (aml_pinctrl_init)
+ * Probe order:
+ *   1. Register platform GPIOs (this function)
+ *   2. Apply pinctrl state (aml_pinctrl_init)
  *   3. Frontend probe (aml_dvb_probe_frontends)
  *
- * Bu sıra kritiktir: pinctrl TS pin'lerini configure eder, GPIO'lar
- * demod/tuner güç kontrolü yapar, frontend probe her ikisine ihtiyaç duyar.
+ * This order is critical: pinctrl configures TS pins, GPIOs handle
+ * demod/tuner power control, frontend probe requires both.
  * ====================================================================== */
 int aml_gpio_init(struct aml_dvb *dvb)
 {
@@ -206,7 +206,7 @@ int aml_gpio_init(struct aml_dvb *dvb)
 	dvb->gpio_count = 0;
 	memset(dvb->gpios, 0, sizeof(dvb->gpios));
 
-	dev_dbg(dvb->dev, "GPIO: platform GPIO'ları kaydediliyor...\n");
+	dev_dbg(dvb->dev, "GPIO: registering platform GPIOs...\n");
 
 	for (i = 0; i < ARRAY_SIZE(aml_platform_gpios); i++) {
 		ret = aml_gpio_register_one(dvb,
@@ -219,7 +219,7 @@ int aml_gpio_init(struct aml_dvb *dvb)
 			return ret;
 	}
 
-	/* Geriye uyumluluk: eski struct alanları doldur */
+	/* Backwards compatibility: populate legacy struct fields */
 	for (i = 0; i < dvb->gpio_count; i++) {
 		if (!strcmp(dvb->gpios[i].label, "demod-power"))
 			dvb->tuner_power_gpio = dvb->gpios[i].gd;
@@ -228,14 +228,14 @@ int aml_gpio_init(struct aml_dvb *dvb)
 	}
 
 	dev_info(dvb->dev,
-		 "GPIO: %d GPIO kaydedildi, /sys/kernel/debug/gpio'da görünür\n",
+		 "GPIO: %d GPIOs registered, visible in /sys/kernel/debug/gpio\n",
 		 dvb->gpio_count);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(aml_gpio_init);
 
 /* ======================================================================
- * aml_gpio_release() — Pinctrl serbest bırak (devm GPIO otomatik)
+ * aml_gpio_release() — Release pinctrl (devm GPIOs are freed automatically)
  * ====================================================================== */
 void aml_gpio_release(struct aml_dvb *dvb)
 {
@@ -247,30 +247,30 @@ void aml_gpio_release(struct aml_dvb *dvb)
 EXPORT_SYMBOL_GPL(aml_gpio_release);
 
 /* ======================================================================
- * aml_pinctrl_init() — TS pin multiplexer durumunu yapılandır
+ * aml_pinctrl_init() — Configure TS pin multiplexer state
  *
- * Pinctrl state sırası (ilk bulunan kullanılır):
- *   1. "default"  — genel amaçlı, DTS'de pinctrl-0 ile tanımlanır
- *   2. "parallel" — paralel TS modu (8-bit data + CLK + SYNC)
+ * Pinctrl state order (first found is used):
+ *   1. "default"  — general purpose, defined in DTS with pinctrl-0
+ *   2. "parallel" — parallel TS mode (8-bit data + CLK + SYNC)
  *
- * /sys/kernel/debug/pinctrl/<device>/pingroups dosyasında hangi pinlerin
- * hangi gruba atandığı görülür. pinctrl_select_state() çağrısından sonra
- * /sys/kernel/debug/gpio'da "PINCTRL" etiketiyle işaretlenir.
+ * The /sys/kernel/debug/pinctrl/<device>/pingroups file shows which pins
+ * are assigned to which group. After pinctrl_select_state(), pins are
+ * marked with the "PINCTRL" label in /sys/kernel/debug/gpio.
  *
- * DTS örneği:
+ * DTS example:
  *   pinctrl-names = "default";
  *   pinctrl-0     = <&ts_in_a_pins &ts_in_b_pins>;
  * ====================================================================== */
-/* aml_pinctrl_init/release: amlogic-dvb-core.c'de tanımlı */
+/* aml_pinctrl_init/release: defined in amlogic-dvb-core.c */
 
 /* ======================================================================
- * aml_demod_power_reset() — Frontend I2C düzeyinde güç+reset sekansı
+ * aml_demod_power_reset() — Frontend I2C-level power+reset sequence
  *
- * Frontend probe sırasında çağrılır. GPIO'lar I2C client DTS node'undan
- * alınır. Consumer name "amlogic-dvb-feN-{power,reset}" formatında atanır
- * → /sys/kernel/debug/gpio'da görünür.
+ * Called during frontend probe. GPIOs are obtained from the I2C client
+ * DTS node. Consumer name is assigned in "amlogic-dvb-feN-{power,reset}"
+ * format, visible in /sys/kernel/debug/gpio.
  *
- * DTS örneği (demod I2C node'u):
+ * DTS example (demod I2C node):
  *   power-gpios          = <&gpio GPIOH_3 GPIO_ACTIVE_HIGH>;
  *   reset-gpios          = <&gpio GPIOH_4 GPIO_ACTIVE_LOW>;
  *   tuner-pwr-gpios      = <&gpio GPIOZ_6 GPIO_ACTIVE_HIGH>;
@@ -299,7 +299,7 @@ int aml_demod_power_reset(struct device *dev)
 	pwr = devm_gpiod_get_optional(dev, "power", GPIOD_OUT_LOW);
 	if (IS_ERR(pwr))
 		return dev_err_probe(dev, PTR_ERR(pwr),
-				     "fe%d: power GPIO alınamadı\n", idx);
+				     "fe%d: failed to acquire power GPIO\n", idx);
 	if (pwr) {
 		snprintf(consumer, sizeof(consumer),
 			 AML_GPIO_PREFIX "fe%d-power", idx);
@@ -320,7 +320,7 @@ int aml_demod_power_reset(struct device *dev)
 	rst = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
 	if (IS_ERR(rst))
 		return dev_err_probe(dev, PTR_ERR(rst),
-				     "fe%d: reset GPIO alınamadı\n", idx);
+				     "fe%d: failed to acquire reset GPIO\n", idx);
 	if (rst) {
 		snprintf(consumer, sizeof(consumer),
 			 AML_GPIO_PREFIX "fe%d-reset", idx);
@@ -329,17 +329,17 @@ int aml_demod_power_reset(struct device *dev)
 	}
 
 	if (!pwr && !rst && !tpwr) {
-		dev_dbg(dev, "fe%d: GPIO tanımlanmamış, sekans atlandı\n", idx);
+		dev_dbg(dev, "fe%d: no GPIOs defined, sequence skipped\n", idx);
 		return 0;
 	}
 
 	/*
-	 * Güç ve reset sekansı:
-	 *   1. Güç kapat → bekle (kapasitörler boşalsın)
-	 *   2. Tuner güç aç (varsa)
-	 *   3. Demod güç aç → bekle (regülatör stabilize)
-	 *   4. Reset assert → bekle
-	 *   5. Reset release → bekle (IC boot)
+	 * Power and reset sequence:
+	 *   1. Power off → wait (let capacitors discharge)
+	 *   2. Turn on tuner power (if present)
+	 *   3. Turn on demod power → wait (regulator stabilisation)
+	 *   4. Reset assert → wait
+	 *   5. Reset release → wait (IC boot)
 	 */
 	if (pwr) {
 		dev_dbg(dev, "[GPIO-fe%d] power OFF (wait %u ms)\n", idx, pwr_off_ms);
@@ -363,7 +363,7 @@ int aml_demod_power_reset(struct device *dev)
 	}
 
 	dev_info(dev,
-		 "fe%d: GPIO sekans tamam (pwr_off=%u pwr_on=%u rst=%u+%u ms)\n",
+		 "fe%d: GPIO sequence complete (pwr_off=%u pwr_on=%u rst=%u+%u ms)\n",
 		 idx, pwr_off_ms, pwr_on_ms, rst_assert, rst_release);
 	return 0;
 }
@@ -372,14 +372,14 @@ EXPORT_SYMBOL_GPL(aml_demod_power_reset);
 /* ======================================================================
  * debugfs: /sys/kernel/debug/<dvb>/gpio
  *
- * Tüm platform GPIO'larının anlık durumunu gösterir.
- * /sys/kernel/debug/gpio ile tamamlayıcı — orada pin fiziksel konumu,
- * burada sürücü perspektifinden logical durum.
+ * Shows the current state of all platform GPIOs.
+ * Complementary to /sys/kernel/debug/gpio — that shows physical pin
+ * location; this shows logical state from the driver perspective.
  *
- * Örnek çıktı:
- *   # Amlogic DVB GPIO Tablosu
- *   # Detaylı fiziksel bilgi: /sys/kernel/debug/gpio
- *   # Consumer adları:        /sys/kernel/debug/gpio (| consumer sütunu)
+ * Example output:
+ *   # Amlogic DVB GPIO Table
+ *   # Detailed physical info: /sys/kernel/debug/gpio
+ *   # Consumer names:         /sys/kernel/debug/gpio (| consumer column)
  *   # Pinctrl durumu:         /sys/kernel/debug/pinctrl/<dev>/pingroups
  *   #
  *   # idx  name             dir  logical  raw  polarity       consumer
@@ -397,13 +397,13 @@ static int aml_gpio_debugfs_show(struct seq_file *s, void *v)
 	int i;
 
 	seq_puts(s,
-		 "# Amlogic DVB GPIO Tablosu\n"
-		 "# /sys/kernel/debug/gpio         — tam GPIO listesi (consumer sütunu)\n"
-		 "# /sys/kernel/debug/pinctrl/...  — pinctrl mux detayları\n"
-		 "#\n");
+		"# Amlogic DVB GPIO Table\n"
+		"# /sys/kernel/debug/gpio         — full GPIO list (consumer column)\n"
+		"# /sys/kernel/debug/pinctrl/...  — pinctrl mux details\n"
+		"#\n");
 
 	if (dvb->gpio_count == 0) {
-		seq_puts(s, "# GPIO tanımlanmamış (DTS'de gpios property eksik)\n");
+		seq_puts(s, "# No GPIOs defined (gpios property missing in DTS)\n");
 		goto pinctrl_section;
 	}
 
@@ -444,26 +444,26 @@ pinctrl_section:
 
 	if (!IS_ERR_OR_NULL(dvb->pinctrl)) {
 		const char *state_name = dvb->pins_default ?
-			"default (aktif)" : "tanımlanmamış";
+			"default (active)" : "undefined";
 		struct device *pindev = &dvb->pdev->dev;
 		(void)pindev;
 
 		seq_printf(s, "  state    : %s\n", state_name);
 		seq_puts(s,
-			 "  detay    : cat /sys/kernel/debug/pinctrl/"
+			 "  detail   : cat /sys/kernel/debug/pinctrl/"
 			 "<periphs-pinctrl>/pingroups\n"
 			 "  ts-pins  : cat /sys/kernel/debug/pinctrl/"
 			 "<periphs-pinctrl>/pins\n");
 	} else {
-		seq_puts(s, "  pinctrl  : yapılandırılmamış\n");
+		seq_puts(s, "  pinctrl  : not configured\n");
 	}
 
 	seq_puts(s,
-		 "\n# Nasıl okunur?\n"
-		 "#   logical=1 + raw=0 + ACTIVE_LOW  → pin fiziksel LOW, logic HIGH (aktif)\n"
-		 "#   logical=1 + raw=1 + ACTIVE_HIGH → pin fiziksel HIGH, logic HIGH (aktif)\n"
-		 "#   direction=out → sürücü kontrol ediyor\n"
-		 "#   direction=in  → pin state okunuyor (input)\n");
+		 "\n# How to read?\n"
+		 "#   logical=1 + raw=0 + ACTIVE_LOW  → pin physically LOW, logic HIGH (active)\n"
+		 "#   logical=1 + raw=1 + ACTIVE_HIGH → pin physically HIGH, logic HIGH (active)\n"
+		 "#   direction=out → driver is controlling\n"
+		 "#   direction=in  → pin state is being read (input)\n");
 
 	return 0;
 }
@@ -472,19 +472,19 @@ DEFINE_SHOW_ATTRIBUTE(aml_gpio_debugfs);
 /* ======================================================================
  * debugfs: /sys/kernel/debug/<dvb>/pinctrl_state
  *
- * Pinctrl'ün mevcut ve kullanılabilir state'lerini listeler.
- * TS pin grubu adlarını kernel pinctrl altyapısından okur.
+ * Lists the current and available pinctrl states.
+ * Reads TS pin group names from the kernel pinctrl subsystem.
  * ====================================================================== */
 static int aml_pinctrl_debugfs_show(struct seq_file *s, void *v)
 {
 	struct aml_dvb *dvb = s->private;
 
-	seq_puts(s, "# Amlogic DVB Pinctrl Durumu\n#\n");
+	seq_puts(s, "# Amlogic DVB Pinctrl State\n#\n");
 
 	if (IS_ERR_OR_NULL(dvb->pinctrl)) {
-		seq_puts(s, "pinctrl yapılandırılmamış\n\n");
+		seq_puts(s, "pinctrl not configured\n\n");
 		seq_puts(s,
-			 "DTS'e ekle:\n"
+			 "Add to DTS:\n"
 			 "  pinctrl-names = \"default\";\n"
 			 "  pinctrl-0     = <&ts_in_a_pins>;\n");
 		return 0;
@@ -496,22 +496,22 @@ static int aml_pinctrl_debugfs_show(struct seq_file *s, void *v)
 		   dvb->pins_default ? "default" : "(none)");
 
 	seq_puts(s,
-		 "\n# TS pin mux referansı (SM1/S905X3 örneği):\n"
+		 "\n# TS pin mux reference (SM1/S905X3 example):\n"
 		 "#\n"
 		 "#  Paralel mod (DTS: ts_in_a_pins):\n"
 		 "#    GPIOX_0..7 → ts0_d0..d7\n"
 		 "#    GPIOX_8    → ts0_clk\n"
 		 "#    GPIOX_9    → ts0_sync\n"
-		 "#    GPIOX_10   → ts0_valid (opsiyonel)\n"
+		 "#    GPIOX_10   → ts0_valid (optional)\n"
 		 "#\n"
-		 "#  Seri mod S_TS0 (DTS: s_ts0_pins):\n"
-		 "#    GPIOZ_2    → ts0_seri_data\n"
-		 "#    GPIOZ_3    → ts0_seri_clk\n"
+		 "#  Serial mode S_TS0 (DTS: s_ts0_pins):\n"
+		 "#    GPIOZ_2    → ts0_serial_data\n"
+		 "#    GPIOZ_3    → ts0_serial_clk\n"
 		 "#\n"
-		 "#  Pinctrl pin gruplarını listele:\n"
+		 "#  List pinctrl pin groups:\n"
 		 "#    cat /sys/kernel/debug/pinctrl/<periphs>/pingroups\n"
 		 "#\n"
-		 "#  Hangi pin hangi grupta:\n"
+		 "#  Which pin is in which group:\n"
 		 "#    cat /sys/kernel/debug/pinctrl/<periphs>/pins\n");
 
 	return 0;
@@ -519,18 +519,18 @@ static int aml_pinctrl_debugfs_show(struct seq_file *s, void *v)
 DEFINE_SHOW_ATTRIBUTE(aml_pinctrl_debugfs);
 
 /* ======================================================================
- * aml_gpio_debugfs_init() — debugfs dosyalarını oluştur
+ * aml_gpio_debugfs_init() — Create debugfs files
  * ====================================================================== */
 void aml_gpio_debugfs_init(struct aml_dvb *dvb, struct dentry *root)
 {
 	if (!root)
 		return;
 
-	/* /sys/kernel/debug/<dvb>/gpio — tüm platform GPIO tablosu */
+	/* /sys/kernel/debug/<dvb>/gpio — full platform GPIO table */
 	debugfs_create_file("gpio", 0444, root, dvb,
 			    &aml_gpio_debugfs_fops);
 
-	/* /sys/kernel/debug/<dvb>/pinctrl_state — pinctrl durumu */
+	/* /sys/kernel/debug/<dvb>/pinctrl_state — pinctrl state */
 	debugfs_create_file("pinctrl_state", 0444, root, dvb,
 			    &aml_pinctrl_debugfs_fops);
 }

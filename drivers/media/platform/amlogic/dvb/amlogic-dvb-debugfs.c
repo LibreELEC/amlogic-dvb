@@ -12,7 +12,7 @@
 #include "amlogic_dvb.h"
 #include "amlogic-dvb-regs.h"
 
-/* BUG-9: aml_dvb_debug artık u32 */
+/* BUG-9: aml_dvb_debug is now u32 */
 extern u32 aml_dvb_debug;
 
 static const struct debugfs_reg32 aml_dvb_debug_regs[] = {
@@ -74,7 +74,7 @@ static int aml_dvb_debugfs_stats_show(struct seq_file *s, void *v)
 
 	seq_printf(s, "IRQ count:    %llu\n", irq);
 	seq_printf(s, "Packet count: %llu\n", pkt);
-	/* BUG-4: feed_count atomic olarak okunur */
+	/* BUG-4: feed_count is read atomically */
 	seq_printf(s, "Feed count:   %d\n", atomic_read(&dvb->feed_count));
 	return 0;
 }
@@ -147,7 +147,7 @@ void aml_dvb_debugfs_init(struct aml_dvb *dvb)
 	debugfs_create_file("stats", 0444, root, dvb,
 			    &aml_dvb_debugfs_stats_fops);
 
-	/* BUG-9: u32 olarak cast ile debug level */
+	/* BUG-9: debug level with u32 cast */
 	debugfs_create_u32("aml_debug_level", 0644, root, &aml_dvb_debug);
 
 	for (i = 0; i < dvb->caps.num_demux; i++) {
