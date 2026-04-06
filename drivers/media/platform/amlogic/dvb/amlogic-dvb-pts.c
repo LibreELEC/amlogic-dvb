@@ -15,8 +15,8 @@ u64 aml_dmx_get_video_pts(struct aml_dmx *dmx)
 	u64 pts;
 	int ret;
 
-	/* Race fix: pts_hi iki kez okunur. Aralarında pts_lo alınır.
-	 * pts_hi değişmişse 32-bit taşma olmuş demektir — tekrar dene. */
+	/* Race fix: pts_hi is read twice. pts_lo is read in between.
+	 * If pts_hi has changed, a 32-bit overflow has occurred — retry. */
 	do {
 		ret = aml_read_reg(dvb, STB_PTS_DTS_STATUS(dmx->id), &pts_hi);
 		if (ret)

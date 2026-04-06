@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Amlogic DVB CA/DSC genişletilmiş ioctl tanımları
+ * Amlogic DVB CA/DSC extended ioctl definitions
  * Vendor: aml_ca_ext.h — mainline port
  *
- * Kullanım:
+ * Usage:
  *   CA_SET_DESCR_EX   : CSA/AES/DES/SM4 key set
- *   CA_SC2_SET_DESCR_EX: SC2 (S905D3+) genişletilmiş CA
- *   CA_SET_PID        : CA PID ayarla
+ *   CA_SC2_SET_DESCR_EX: SC2 (S905D3+) extended CA
+ *   CA_SET_PID        : set CA PID
  */
 #ifndef __AML_DVB_CA_EXT_H__
 #define __AML_DVB_CA_EXT_H__

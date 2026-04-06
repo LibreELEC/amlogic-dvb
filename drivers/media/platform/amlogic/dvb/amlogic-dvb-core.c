@@ -6,19 +6,19 @@
  */
 
 /*
- * Değişiklik Geçmişi:
- *   V1.00 - İlk mainline port (DVB-S/S2/C/T2, SM1 desteği)
- *   V1.10 - TS port mismatch fix (ts-source: demux index / tsin ayrımı)
- *   V1.20 - tsin disabled DTS node'larının for_each_child ile atlanması
- *   V1.30 - R848 I2C adresi: 0x3d→0x7a (AVL6862 repeater 8-bit format)
+ * Change History:
+ *   V1.00 - Initial mainline port (DVB-S/S2/C/T2, SM1 support)
+ *   V1.10 - TS port mismatch fix (ts-source: demux index / tsin distinction)
+ *   V1.20 - Skip disabled tsin DTS nodes with for_each_child
+ *   V1.30 - R848 I2C address: 0x3d→0x7a (AVL6862 repeater 8-bit format)
  *   V1.40 - power-gpios: &gpio→&gpio_ao (GPIOE_2 aobus offset 14)
- *   V1.50 - ts-source/ts-port ayrımı: TVH dmx0, fiziksel port tsin_b
+ *   V1.50 - ts-source/ts-port distinction: TVH dmx0, physical port tsin_b
  *   V2.00 - regs.h: frontend.c pm_runtime/asyncfifo_set_source/set_ts_rate
- *           ts.c: s2p_init DTS node taraması (amlogic,clkinv/sopinv)
+ *           ts.c: s2p_init DTS node scan (amlogic,clkinv/sopinv)
  *   V2.01 - regs.h: AML_DEMUX_REG stride 0x200→0x140 (datasheet: core delta=0x140)
  *           regs.h: DEMUX_CONTROL offset 0x00→0x04 (0x00=STB_VERSION_O RO!)
- *           regs.h: TS_IN_CTRL/TS_S2P_CTRL FIXME uyarısı (adres çakışması)
- *           ts.c: TS_IN_CTRL yazması guard altına alındı (adres doğrulanmamış)
+ *           regs.h: TS_IN_CTRL/TS_S2P_CTRL FIXME warning (address conflict)
+ *           ts.c: TS_IN_CTRL write placed under guard (address unverified)
  */
 
 
@@ -51,7 +51,7 @@
 #define MAX_DELSYS 8
 #endif
 #include <linux/seq_file.h>
-// compat.h kaldırıldı — dvb_register_adapter doğrudan kullanılıyor
+// compat.h removed — dvb_register_adapter used directly
 
 
 static short adapter_nr[AML_MAX_DEMUX] = { -1, -1, -1 };
@@ -74,14 +74,14 @@ MODULE_PARM_DESC(debug, "Debug level (0=off, 1=info, 2=verbose)");
 /* ---------------------------------------------------------------------- */
 static void aml_default_reset_fifo(struct aml_dvb *dvb, int id)
 {
-	/* IDLE state — BIT29=1, BIT31=0 (dev/mem: inaktif=0x20000000) */
+	/* IDLE state — BIT29=1, BIT31=0 (dev/mem: inactive=0x20000000) */
 	aml_write_async(dvb, ASYNC_FIFO_CTRL(id), ASYNC_FIFO_IDLE);
 }
 
 static void aml_default_enable_ts_input(struct aml_dvb *dvb, int idx)
 {
-    /* ts[idx].mode aml_ts_input_init() tarafından DTS'den okunarak
-     * ayarlanmış olmalı. Henüz init yapılmamışsa varsayılan paralel. */
+    /* ts[idx].mode should have been set by aml_ts_input_init() reading
+     * from DTS. If init has not been done yet, default is parallel. */
     u32 mode = dvb->ts[idx].mode ? TS_IN_SERIAL : TS_IN_PARALLEL;
     aml_write_reg(dvb, TS_IN_CTRL(idx), TS_IN_ENABLE | mode);
 }
@@ -147,10 +147,10 @@ static void aml_dvb_detect_capabilities(struct aml_dvb *dvb)
         caps->soc_name = "SM1 (S905X3)";
         caps->has_ciplus = true;
         caps->max_bitrate = 192;
-        /* S905X3 memory map (XLS doğrulandı):
+        /* S905X3 memory map (XLS verified):
          *   async_fifo  = 0xFFD0A000  ✓
          *   async_fifo2 = 0xFFD09000  ✓
-         *   async_fifo3 = 0xFFD26000  S905D3'e özel, S905X3'te YOK
+         *   async_fifo3 = 0xFFD26000  S905D3-specific, NOT present on S905X3
          * DTS: 0xffd09000 0x2000 — sadece 2 blok mapped
          */
         caps->num_asyncfifo = 2;
@@ -239,12 +239,12 @@ static int aml_dvb_map_registers(struct aml_dvb *dvb)
     void __iomem *base;
 
     /*
-     * "ts" region: 0xffd06000 — TS_IN portları, S2P, TOP_CONFIG
-     * dev/mem ile doğrulandı: paket sayacı (0xffd0611C) değişiyor
+     * "ts" region: 0xffd06000 — TS_IN ports, S2P, TOP_CONFIG
+     * Verified with dev/mem: packet counter (0xffd0611C) is changing
      */
     res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ts");
     if (!res) {
-        /* Eski DTS uyumluluğu: tek "demux" entry varsa onu "ts" olarak kullan */
+        /* Legacy DTS compatibility: if only a single "demux" entry exists, use it as "ts" */
         res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "demux");
         if (!res)
             res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -254,7 +254,7 @@ static int aml_dvb_map_registers(struct aml_dvb *dvb)
         }
         dev_warn(dvb->dev, "Using legacy single-region DTS — demux core NOT mapped!\n");
     }
-    /* devm_ioremap: region claim yapmadan map et (vdec paylaşım uyumluluğu) */
+    /* devm_ioremap: map without claiming region (vdec sharing compatibility) */
     base = devm_ioremap(dvb->dev, res->start, resource_size(res));
     if (!base)
         return -ENOMEM;
@@ -265,10 +265,10 @@ static int aml_dvb_map_registers(struct aml_dvb *dvb)
      * "demux" region: 0xff638000 — DEMUX core (PID filter, section filter)
      * dev/mem: DEMUX_CONTROL idx 0x04 = 0x009FF8EF, STB_VERSION idx 0x00 = 0x00FFFFFF
      *
-     * devm_ioremap() kullanılıyor (devm_ioremap_resource() değil):
-     *   meson_vdec sürücüsü bu bölgeyi zaten request_mem_region ile claim ediyor.
-     *   devm_ioremap_resource() ikinci bir claim deneyip EBUSY döndürürdü.
-     *   devm_ioremap() sadece map yapar, claim etmez — paylaşım güvenli.
+     * devm_ioremap() is used (not devm_ioremap_resource()):
+     *   The meson_vdec driver already claims this region with request_mem_region.
+     *   devm_ioremap_resource() would attempt a second claim and return EBUSY.
+     *   devm_ioremap() only maps, does not claim — sharing is safe.
      */
     res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "demux");
     if (res) {
@@ -281,19 +281,19 @@ static int aml_dvb_map_registers(struct aml_dvb *dvb)
         dvb->base_asyncfifo = base;
         dev_info(dvb->dev, "Demux core registers: %pR (shared ioremap)\n", res);
     } else {
-        /* SM1 (S905X3) için beklenen durum: "demux" bölgesi DTS'te yok.
-         * devmem2 ile kanıtlandı: 0xff638000 = AXI bus noise.
-         * SM1'de tüm DMX registerleri "ts" bölgesindedir (0xffd06000).
-         * base_demux → base_ts yönlendirmesi DOĞRU. */
+        /* Expected for SM1 (S905X3): "demux" region is absent from DTS.
+         * Proven with devmem2: 0xff638000 = AXI bus noise.
+         * On SM1 all DMX registers are in the "ts" region (0xffd06000).
+         * base_demux → base_ts redirection is CORRECT. */
         dev_info(dvb->dev, "No 'demux' region — SM1: using 'ts' base (0xffd06000) for DMX registers\n");
         dvb->base_demux = dvb->base_ts;
     }
 
     /*
-     * "async-fifo" region: 0xFFD09000 — async_fifo2 + async_fifo DMA blokları
-     * S905X3: async_fifo2=0xFFD09000, async_fifo=0xFFD0A000 (iki ayrı 4KB blok)
-     * DTS'te: reg = <0x0 0xffd09000 0x0 0x2000>
-     * devm_ioremap: bu bölge de başka sürücülerle çakışabilir
+     * "async-fifo" region: 0xFFD09000 — async_fifo2 + async_fifo DMA blocks
+     * S905X3: async_fifo2=0xFFD09000, async_fifo=0xFFD0A000 (two separate 4KB blocks)
+     * DTS: reg = <0x0 0xffd09000 0x0 0x2000>
+     * devm_ioremap: this region may also conflict with other drivers
      */
     res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "async-fifo");
     if (res) {
@@ -305,14 +305,14 @@ static int aml_dvb_map_registers(struct aml_dvb *dvb)
         dvb->base_asyncfifo = base;
         dev_info(dvb->dev, "Async FIFO registers: %pR\n", res);
     }
-    /* base_asyncfifo yoksa yukarıdaki fallback (base_demux veya base_ts) geçerli */
+    /* If base_asyncfifo is absent, the fallback above (base_demux or base_ts) applies */
 
     return 0;
 }
 
 static int aml_dvb_init_regmaps(struct aml_dvb *dvb)
 {
-    /* regmap_ts: TS_IN portları ve TOP_CONFIG (0xffd06000) */
+    /* regmap_ts: TS_IN ports and TOP_CONFIG (0xffd06000) */
     dvb->regmap_ts = devm_regmap_init_mmio(dvb->dev, dvb->base_ts,
                            &aml_demux_regmap_config);
     if (IS_ERR(dvb->regmap_ts)) {
@@ -330,7 +330,7 @@ static int aml_dvb_init_regmaps(struct aml_dvb *dvb)
         return PTR_ERR(dvb->regmap_demux);
     }
 
-    /* ASYNC FIFO — ayrı fiziksel blok (0xFFD09000), kendi regmap'i
+    /* ASYNC FIFO — separate physical block (0xFFD09000), its own regmap
      *
      * DTS: reg = <0x0 0xffd09000 0x0 0x2000>
      *   FIFO[1] @ offset 0x0000 (async_fifo2 = 0xFFD09000)
@@ -346,7 +346,7 @@ static int aml_dvb_init_regmaps(struct aml_dvb *dvb)
             dvb->regmap_async = dvb->regmap_demux;
         }
     } else {
-        /* DTS'te async-fifo bölgesi tanımlı değil — demux regmap'ini paylaş */
+        /* async-fifo region not defined in DTS — share demux regmap */
         dvb->regmap_async = dvb->regmap_demux;
     }
 
@@ -358,12 +358,12 @@ static int aml_dvb_init_regmaps(struct aml_dvb *dvb)
 /* ---------------------------------------------------------------------- */
 static int aml_dvb_init_gpio(struct aml_dvb *dvb)
 {
-	/* GPIO'lar (power-gpios, reset-gpios) mainline DTS'de platform device
-	 * node'unda değil, I2C client node'unda (frontend0) tanımlı.
+	/* GPIOs (power-gpios, reset-gpios) are defined in the I2C client node
+	 * (frontend0) in mainline DTS, not in the platform device node.
 	 *
-	 * Demod-specific güç/reset sekansı avl6862_probe() tarafından
-	 * aml_demod_power_reset(&client->dev) çağrısıyla yönetilir.
-	 * Bu fonksiyon bilinçli olarak boş bırakıldı. */
+	 * Demod-specific power/reset sequence is managed by avl6862_probe()
+	 * via the aml_demod_power_reset(&client->dev) call.
+	 * This function is intentionally left empty. */
 	return 0;
 }
 
@@ -384,13 +384,13 @@ int aml_pinctrl_init(struct aml_dvb *dvb)
         return 0;
     }
 
-    /* "parallel" veya eski "default" state'i dene.
-     * ts-serial = <0> ise aml_ts_input_init() "parallel" state'ini
-     * seçer; ts-serial = <1> ise "serial" seçer.
-     * Probe sırasında başlangıç state'i olarak "parallel" kullanılır. */
+    /* Try "parallel" or legacy "default" state.
+     * If ts-serial = <0>, aml_ts_input_init() selects the "parallel" state;
+     * if ts-serial = <1>, it selects "serial".
+     * During probe, "parallel" is used as the initial state. */
     dvb->pins_default = pinctrl_lookup_state(dvb->pinctrl, "parallel");
     if (IS_ERR(dvb->pins_default)) {
-        /* Geriye dönük uyumluluk: eski "default" adını dene */
+        /* Backwards compatibility: try legacy "default" name */
         dvb->pins_default = pinctrl_lookup_state(dvb->pinctrl, "default");
         if (IS_ERR(dvb->pins_default)) {
             dev_info(dev, "No 'parallel' or 'default' pinctrl state found\n");
@@ -488,10 +488,10 @@ int aml_dvb_runtime_suspend(struct device *dev)
 {
     struct aml_dvb *dvb = dev_get_drvdata(dev);
 
-    /* S905X3 demux kendi power domain'inde (vdec ile AYRI).
-     * AO_RTI_GEN_PWR_SLEEP0 (0xC81000E8) erişilemiyor — AO bölgesi
-     * bizim regmap'ımızda yok, yanlış adrese yazardı.
-     * Kernel power-domain framework zaten yönetiyor. */
+    /* S905X3 demux has its own power domain (SEPARATE from vdec).
+     * AO_RTI_GEN_PWR_SLEEP0 (0xC81000E8) is inaccessible — AO region
+     * is not in our regmap, writing would go to the wrong address.
+     * The kernel power-domain framework already manages this. */
     dev_info(dev, "runtime_suspend: disabling clocks\n");
     aml_dvb_clk_disable(dvb);
     return 0;
@@ -503,8 +503,8 @@ int aml_dvb_runtime_resume(struct device *dev)
     struct aml_dvb *dvb = dev_get_drvdata(dev);
     int ret;
 
-    /* Power domain kernel tarafından yönetiliyor.
-     * Sadece saatleri aç. */
+    /* Power domain is managed by the kernel.
+     * Just enable the clocks. */
     dev_info(dev, "runtime_resume: enabling clocks\n");
     ret = aml_dvb_clk_enable(dvb);
     if (ret) {
@@ -567,7 +567,7 @@ static irqreturn_t aml_dvb_irq_thread(int irq, void *dev_id)
     if (!status)
         return IRQ_NONE;
 
-    /* Vendor sırası: ÖNCE işle, SONRA ACK */
+    /* Vendor order: process FIRST, ACK AFTER */
 
     /* HW section filter — SEC_BUFF_READY */
     if (status & INT_SECTION_READY)
@@ -577,14 +577,14 @@ static irqreturn_t aml_dvb_irq_thread(int irq, void *dev_id)
     if (status & INT_NEW_PDTS)
         dmx->pcr = aml_dmx_get_pcr(dmx);
 
-    /* TS error sayacı */
+    /* TS error counter */
     if (status & INT_TS_ERROR) {
         u64_stats_update_begin(&dmx->stats.syncp);
         u64_stats_add(&dmx->stats.ts_errors, 1);
         u64_stats_update_end(&dmx->stats.syncp);
     }
 
-    /* ACK — işlemden SONRA (vendor sırası) */
+    /* ACK — AFTER processing (vendor order) */
     aml_write_reg(dmx->dvb, STB_INT_STATUS(dmx->id), status);
 
     return IRQ_HANDLED;
@@ -595,7 +595,7 @@ static irqreturn_t aml_dvb_irq_thread(int irq, void *dev_id)
 /* ---------------------------------------------------------------------- */
 
 /* ======================================================================
- * /proc/bus/nim_sockets — Enigma2 uyumluluğu
+ * /proc/bus/nim_sockets — Enigma2 compatibility
  *
  * Format (Enigma2 beklentisi):
  *   NIM Socket <N>:
@@ -607,8 +607,8 @@ static irqreturn_t aml_dvb_irq_thread(int irq, void *dev_id)
  * ====================================================================== */
 
 /*
- * aml_nim_type_str — Enigma2'nin Type: alanı için delsys[] tarar,
- * en yetenekli modu döner (T2 > T, S2 > S, C).
+ * aml_nim_type_str — Scans delsys[] for Enigma2's Type: field,
+ * returns the most capable mode (T2 > T, S2 > S, C).
  */
 static const char *aml_nim_type_str(struct dvb_frontend *fe)
 {
@@ -632,7 +632,7 @@ static const char *aml_nim_type_str(struct dvb_frontend *fe)
 		}
 	}
 
-	/* Multi-mode: ilk delsys'e göre primary type */
+	/* Multi-mode: primary type based on first delsys */
 	switch (fe->ops.delsys[0]) {
 	case SYS_DVBT:
 	case SYS_DVBT2:
@@ -649,15 +649,15 @@ static const char *aml_nim_type_str(struct dvb_frontend *fe)
 }
 
 /*
- * aml_nim_scan_modes - fe->ops.delsys[] tarayarak benzersiz modları çıkar
+ * aml_nim_scan_modes - Scans fe->ops.delsys[] and extracts unique modes
  *
- * Enigma2 mode grupları:
+ * Enigma2 mode groups:
  *   DVB-S  ← SYS_DVBS, SYS_DVBS2
  *   DVB-T  ← SYS_DVBT, SYS_DVBT2
  *   DVB-C  ← SYS_DVBC_ANNEX_A, SYS_DVBC_ANNEX_B
  *
- * modes[] dizisi: 0=DVB-S, 1=DVB-T, 2=DVB-C varlığını işaretler
- * Dönüş değeri: bulunan mod sayısı
+ * modes[] array: marks presence of 0=DVB-S, 1=DVB-T, 2=DVB-C
+ * Return value: number of modes found
  */
 static int aml_nim_scan_modes(struct dvb_frontend *fe, bool modes[3])
 {
@@ -713,7 +713,7 @@ static int aml_nim_sockets_show(struct seq_file *m, void *v)
 		seq_printf(m, "\tHas_Outputs: %s\n",
 			   num_modes > 1 ? "yes" : "no");
 
-		/* Multi-mode: Mode 0/1/2 satırları */
+		/* Multi-mode: Mode 0/1/2 lines */
 		if (num_modes > 1) {
 			const char * const mode_names[3] = {
 				"DVB-S", "DVB-T", "DVB-C"
@@ -747,8 +747,8 @@ static void aml_nim_sockets_create(struct aml_dvb *dvb)
 	struct proc_dir_entry *entry;
 
 	/*
-	 * /proc/bus her zaman kernel tarafından oluşturulur — proc_mkdir
-	 * çağırmak WARN_ON tetikler. Direkt "bus/nim_sockets" yolu kullan.
+	 * /proc/bus is always created by the kernel — calling proc_mkdir
+	 * triggers WARN_ON. Use the "bus/nim_sockets" path directly.
 	 */
 	entry = proc_create_data("bus/nim_sockets", 0444, NULL,
 				 &aml_nim_sockets_ops, dvb);
@@ -857,10 +857,10 @@ static int aml_dvb_probe(struct platform_device *pdev)
         dvb->clk_asyncfifo = NULL;
     }
 
-    /* SM1 (>= G12A): vendor üç saati açar — parser_top ve ahbarb0 zorunlu.
-     * parser_top kapalı → video PES parser'a gidemez.
-     * ahbarb0 kapalı    → AHB DMA durur, section/PES aktarılamaz.
-     * optional: eski SoC'larda DTS'te olmasa hata vermez. */
+    /* SM1 (>= G12A): vendor enables three clocks — parser_top and ahbarb0 required.
+     * parser_top off → video cannot reach PES parser.
+     * ahbarb0 off    → AHB DMA stops, section/PES cannot be transferred.
+     * optional: no error if absent from DTS on older SoCs. */
     dvb->clk_parser = devm_clk_get_optional(dev, "parser_top");
     if (IS_ERR(dvb->clk_parser)) {
         ret = PTR_ERR(dvb->clk_parser);
@@ -907,7 +907,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
     }
     dvb->adapter.priv = dvb;
 
-    /* ========== TS başlangıç değerlerini ata ========== */
+    /* ========== Assign TS initial values ========== */
     dvb->ts_sync_byte = 0x47;
     dvb->ts_packet_len = 188;
     /* ================================================== */
@@ -997,15 +997,15 @@ static int aml_dvb_probe(struct platform_device *pdev)
     dev_dbg(dev, "aml_dvb_probe: all demux cores initialized successfully\n");
 
     /*
-     * Async FIFO IRQ'larını kaydet.
+     * Register Async FIFO IRQs.
      *
-     * DTS interrupt sırası (vendor /proc/interrupts doğrulamalı):
-     *   [0..num_demux-1] = dmx IRQ'ları (yukarıda kaydedildi)
-     *   [num_demux + 0]  = SPI 51 → asyncfifo0  (6219 hit aktif kayıtta)
+     * DTS interrupt order (vendor /proc/interrupts verification):
+     *   [0..num_demux-1] = dmx IRQs (registered above)
+     *   [num_demux + 0]  = SPI 51 → asyncfifo0  (6219 hits during active recording)
      *   [num_demux + 1]  = SPI 57 → asyncfifo1
      *
-     * fill_irq: FIFO dolu IRQ (data geldi)
-     * flush_irq: timeout/flush IRQ — aynı hat, ayrı handler gerekmez
+     * fill_irq: FIFO full IRQ (data arrived)
+     * flush_irq: timeout/flush IRQ — same line, no separate handler needed
      */
     for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
         struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
@@ -1032,7 +1032,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
             goto err_demux_release;
         }
         dev_info(dev, "afifo%d: IRQ %d registered OK\n", i, afifo->fill_irq);
-        /* IRQ kayıt sonrası DEMUX_CONTROL'u kontrol et */
+        /* Check DEMUX_CONTROL after IRQ registration */
         {
             u32 ctrl_check = 0;
             aml_read_reg(dvb, DEMUX_CONTROL(0), &ctrl_check);
@@ -1060,7 +1060,7 @@ static int aml_dvb_probe(struct platform_device *pdev)
 
     dev_info(dev, AML_DVB_CARD_NAME " " AML_DVB_VERSION " loaded\n");
 
-	/* /proc/bus/nim_sockets — Enigma2 uyumluluğu */
+	/* /proc/bus/nim_sockets — Enigma2 compatibility */
 	aml_nim_sockets_create(dvb);
 
     return 0;
@@ -1187,16 +1187,16 @@ static struct platform_driver aml_dvb_driver = {
 };
 
 /* ---------------------------------------------------------------------- */
-/* Module Init/Exit - I2C ve Platform Sürücülerini Beraber Kaydet */
+/* Module Init/Exit — Register I2C and Platform Drivers Together */
 /* ---------------------------------------------------------------------- */
 
 static int __init aml_dvb_init(void)
 {
     int ret;
 
-    /* Platform sürücüsünü (Demux) kaydet.
-     * AVL6862 I2C sürücüsü kendi modülünde module_i2c_driver()
-     * ile otomatik kayıt yapıyor — burada kayıt gerekmez. */
+    /* Register the platform driver (Demux).
+     * The AVL6862 I2C driver self-registers with module_i2c_driver()
+     * in its own module — no registration needed here. */
     ret = platform_driver_register(&aml_dvb_driver);
     if (ret) {
         pr_err("amlogic-dvb: Failed to register platform driver: %d\n", ret);
@@ -1211,7 +1211,7 @@ static void __exit aml_dvb_exit(void)
     platform_driver_unregister(&aml_dvb_driver);
 }
 
-/* module_platform_driver yerine manuel init/exit kullanıyoruz */
+/* Using manual init/exit instead of module_platform_driver */
 module_init(aml_dvb_init);
 module_exit(aml_dvb_exit);
 

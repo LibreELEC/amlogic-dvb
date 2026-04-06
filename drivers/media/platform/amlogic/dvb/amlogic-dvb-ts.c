@@ -20,16 +20,16 @@ static int aml_ts_input_init(struct aml_dvb *dvb, int idx)
     int ret;
 
     /*
-     * DTS tsin sub-node'unu disabled olanlar dahil ara.
-     * for_each_available_child_of_node() disabled node'ları ATLAR,
-     * bu yüzden for_each_child_of_node() kullanılmalı.
+     * Search DTS tsin sub-nodes including disabled ones.
+     * for_each_available_child_of_node() SKIPS disabled nodes,
+     * so for_each_child_of_node() must be used.
      *
-     * tsin@N { status = "disabled"; } → bu TS port fiziksel olarak
-     * bağlı değil, dokunma. Return 0 ile geç.
+     * tsin@N { status = "disabled"; } — this TS port is not physically
+     * connected, do not touch. Return 0 and skip.
      *
-     * tsin@N { status = "okay"; } → enabled, init et.
+     * tsin@N { status = "okay"; } — enabled, initialise.
      *
-     * DTS'de hiç tsin@N node yoksa → eski DTS uyumluluğu için devam et.
+     * If no tsin@N node exists in DTS, continue for legacy DTS compatibility.
      */
     if (np) {
         struct device_node *child;
@@ -50,13 +50,13 @@ static int aml_ts_input_init(struct aml_dvb *dvb, int idx)
             of_node_put(child);
             break;
         }
-        (void)found; /* eski DTS'te tsin node yoksa devam et */
+        (void)found; /* continue if tsin node is absent in legacy DTS */
     }
 
     /*
-     * ts-serial modunu frontend DTS node'undan oku.
-     * ts-port=<idx> olan frontend'i ara (yeni DTS).
-     * Bulunamazsa dvb-frontends[idx] ile dene (eski DTS uyumlulugu).
+     * Read ts-serial mode from frontend DTS node.
+     * Search for frontend with ts-port=<idx> (new DTS).
+     * If not found, try dvb-frontends[idx] (legacy DTS compatibility).
      */
     if (np) {
         int fe_count = of_count_phandle_with_args(np, "dvb-frontends", NULL);
@@ -68,7 +68,7 @@ static int aml_ts_input_init(struct aml_dvb *dvb, int idx)
                 of_parse_phandle(np, "dvb-frontends", fi);
             if (!cand)
                 continue;
-            /* ts-port (yeni DTS) veya ts-source (eski DTS) */
+            /* ts-port (new DTS) or ts-source (legacy DTS) */
             if (of_property_read_u32(cand, "ts-port", &port_val))
                 of_property_read_u32(cand, "ts-source", &port_val);
             if (port_val == (u32)idx) {
@@ -79,7 +79,7 @@ static int aml_ts_input_init(struct aml_dvb *dvb, int idx)
             }
             of_node_put(cand);
         }
-        /* Eslesme yoksa idx'e gore dene */
+        /* If no match, try by idx */
         if (!found_serial) {
             fe_np = of_parse_phandle(np, "dvb-frontends", idx);
             if (fe_np) {
@@ -106,7 +106,7 @@ static int aml_ts_input_init(struct aml_dvb *dvb, int idx)
         if (!IS_ERR(pctrl))
             pinctrl_select_state(dvb->pinctrl, pctrl);
     } else {
-        ctrl = TS_IN_CTRL_PARALLEL;  /* vendor dogrulanmis: 0x00030003 */
+        ctrl = TS_IN_CTRL_PARALLEL;  /* vendor verified: 0x00030003 */
         dvb->ts[idx].is_serial = false;
         dev_info(dvb->dev, "ts_input_init: TS input %d → PARALLEL mode\n", idx);
         pctrl = pinctrl_lookup_state(dvb->pinctrl, "parallel");
@@ -117,10 +117,10 @@ static int aml_ts_input_init(struct aml_dvb *dvb, int idx)
     dev_info(dvb->dev, "ts_input_init: initializing TS input %d\n", idx);
 
     /*
-     * TS_IN_CTRL adresi vendor devmem ile doğrulandı:
+     * TS_IN_CTRL address verified with vendor devmem:
      *   TS_IN_CTRL(0) → regmap_ts offset 0x000 → phys 0xFFD06000 = 0x00030003
      *   TS_IN_CTRL(1) → regmap_ts offset 0x140 → phys 0xFFD06140 = 0x00030003
-     * regmap_ts ≠ regmap_demux (0xFF638000) → stride çakışması yok.
+     * regmap_ts ≠ regmap_demux (0xFF638000) — no stride conflict.
      */
     ret = aml_write_reg(dvb, TS_IN_CTRL(idx), TS_IN_RESET);
     if (ret) {
@@ -144,8 +144,8 @@ static int aml_ts_input_init(struct aml_dvb *dvb, int idx)
 
 static int aml_s2p_init(struct aml_dvb *dvb, int idx)
 {
-    /* vendor dogrulanmis: 0xFFD06040 = 0x0000CCCC
-     * CLK_DIV=0xCC, CLK_INVERT+DATA_INVERT set, BIT0(ENABLE)=0 (paralel modda bypass)
+    /* vendor verified: 0xFFD06040 = 0x0000CCCC
+     * CLK_DIV=0xCC, CLK_INVERT+DATA_INVERT set, BIT0(ENABLE)=0 (bypassed in parallel mode)
      */
     u32 ctrl = TS_S2P_VENDOR_INIT;
     struct device_node *np = dvb->dev->of_node;
@@ -154,15 +154,15 @@ static int aml_s2p_init(struct aml_dvb *dvb, int idx)
 
     dev_info(dvb->dev, "s2p_init: starting S2P %d\n", idx);
 
-    /* vendor deger sabit 0x0000CCCC - DTS override yok */
+    /* vendor value fixed at 0x0000CCCC — no DTS override */
     (void)np; (void)child;
 
-    /* Donanımı resetle */
+    /* Reset the hardware */
     ret = aml_write_reg(dvb, TS_S2P_CTRL(idx), TS_S2P_RESET);
     if (ret) return ret;
     udelay(10);
 
-    /* Final CTRL değerini yaz (Hedef: 0x401 veya 0xC01) */
+    /* Write the final CTRL value (target: 0x401 or 0xC01) */
     dev_info(dvb->dev, "s2p_init: writing S2P %d ctrl=0x%x\n", idx, ctrl);
     ret = aml_write_reg(dvb, TS_S2P_CTRL(idx), ctrl);
     
@@ -177,15 +177,15 @@ int aml_ts_hw_init(struct aml_dvb *dvb)
     dev_info(dvb->dev, "ts_hw_init: starting\n");
 
     /*
-     * STB_TOP_CONFIG'i sıfırla: tüm DEMUX_X_INPUT_SOURCE alanlarını temizle.
-     * Donanım reset değeri belirsiz — vendor driver her init'te yazar.
-     * aml_dvb_apply_ts_source() sonradan doğru değeri yazacak.
+     * Clear STB_TOP_CONFIG: reset all DEMUX_X_INPUT_SOURCE fields.
+     * Hardware reset value is undefined — vendor driver writes on every init.
+     * aml_dvb_apply_ts_source() will write the correct value afterwards.
      */
     ret = aml_write_reg(dvb, STB_TOP_CONFIG, 0x00000000);
     if (ret)
         dev_warn(dvb->dev, "ts_hw_init: STB_TOP_CONFIG clear failed: %d\n", ret);
 
-    /* TS inputları başlat */
+    /* Initialise TS inputs */
     for (i = 0; i < dvb->caps.num_ts_inputs; i++) {
         dev_info(dvb->dev, "ts_hw_init: initializing TS input %d/%d\n", i, dvb->caps.num_ts_inputs);
         ret = aml_ts_input_init(dvb, i);
@@ -195,7 +195,7 @@ int aml_ts_hw_init(struct aml_dvb *dvb)
         }
     }
 
-    /* S2P dönüştürücüleri başlat */
+    /* Initialise S2P converters */
     for (i = 0; i < dvb->caps.num_s2p; i++) {
         dev_info(dvb->dev, "ts_hw_init: initializing S2P %d/%d\n", i, dvb->caps.num_s2p);
         ret = aml_s2p_init(dvb, i);
@@ -205,8 +205,8 @@ int aml_ts_hw_init(struct aml_dvb *dvb)
         }
     }
 
-    /* TS_TOP_CONFIG register'ını ayarla */
-    /* vendor dogrulanmis (CoreELEC devmem 0xFFD063C4 = 0x7700BB47):
+    /* Configure the TS_TOP_CONFIG register */
+    /* vendor verified (CoreELEC devmem 0xFFD063C4 = 0x7700BB47):
      * bit[31:24]=0x77 framing enable bitleri, bit[15:8]=pkt_len-1, bit[7:0]=sync_byte
      */
     u32 ts_top_val = (0x77u << 24) | ((dvb->ts_packet_len - 1) << 8) | dvb->ts_sync_byte;
