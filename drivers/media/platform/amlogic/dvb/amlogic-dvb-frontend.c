@@ -20,13 +20,13 @@
 #include <linux/delay.h>
 #include <linux/pm_runtime.h>
 #include "amlogic_dvb.h"
-#include "amlogic-dvb-hwops.h"   // <-- ADDED: for hwops struct definition
+#include "amlogic-dvb-hwops.h" // <-- ADDED: for hwops struct definition
 
 /* ── Global DVB adapter list ───────────────────────────────────────── */
 
 struct aml_dvb_entry {
-	struct aml_dvb   *dvb;
-	struct list_head  node;
+	struct aml_dvb *dvb;
+	struct list_head node;
 };
 
 #define MAX_DVB_ADAPTERS 4	/* Max DVB platform adapters in the system */
@@ -76,7 +76,7 @@ EXPORT_SYMBOL_GPL(aml_dvb_list_del);
  * List snapshot is taken under mutex; OF operations are done outside it.
  */
 static struct aml_dvb *aml_dvb_find_by_fe_node(struct device_node *fe_node,
-						int *fe_idx_out)
+					       int *fe_idx_out)
 {
 	struct aml_dvb_entry *entry;
 	struct aml_dvb *found = NULL;
@@ -96,7 +96,8 @@ static struct aml_dvb *aml_dvb_find_by_fe_node(struct device_node *fe_node,
 	for (i = 0; i < nadapters && !found; i++) {
 		struct aml_dvb *dvb = adapters[i];
 		struct device_node *np = dvb->dev->of_node;
-		int count = of_count_phandle_with_args(np, "dvb-frontends", NULL);
+		int count =
+			of_count_phandle_with_args(np, "dvb-frontends", NULL);
 
 		for (j = 0; j < count && j < AML_MAX_FRONTEND; j++) {
 			struct device_node *ref =
@@ -127,7 +128,8 @@ static struct aml_dvb *aml_dvb_find_by_fe_node(struct device_node *fe_node,
  * Return value: 0 success, negative error
  */
 static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
-				  int fe_idx, u32 *ts_demux_out, u32 *ts_port_out)
+				 int fe_idx, u32 *ts_demux_out,
+				 u32 *ts_port_out)
 {
 	u32 ts_demux, ts_port;
 	int ret;
@@ -136,12 +138,14 @@ static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
 	ret = of_property_read_u32(np, "ts-source", &ts_demux);
 	if (ret) {
 		ts_demux = fe_idx % dvb->caps.num_demux;
-		dev_info(dvb->dev, "Frontend %d: no ts-source, defaulting to demux %d\n",
+		dev_info(dvb->dev,
+			 "Frontend %d: no ts-source, defaulting to demux %d\n",
 			 fe_idx, ts_demux);
 	}
 	if (ts_demux >= dvb->caps.num_demux) {
-		dev_err(dvb->dev, "Frontend %d: invalid ts-source %d, using 0\n",
-			fe_idx, ts_demux);
+		dev_err(dvb->dev,
+			"Frontend %d: invalid ts-source %d, using 0\n", fe_idx,
+			ts_demux);
 		ts_demux = 0;
 	}
 
@@ -150,11 +154,13 @@ static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
 	if (ret) {
 		/* Legacy DTS compatibility: port = demux index */
 		ts_port = ts_demux;
-		dev_info(dvb->dev, "Frontend %d: no ts-port, using demux index (%d)\n",
+		dev_info(dvb->dev,
+			 "Frontend %d: no ts-port, using demux index (%d)\n",
 			 fe_idx, ts_port);
 	}
 	if (ts_port >= dvb->caps.num_demux) {
-		dev_err(dvb->dev, "Frontend %d: invalid ts-port %d, using demux index (%d)\n",
+		dev_err(dvb->dev,
+			"Frontend %d: invalid ts-port %d, using demux index (%d)\n",
 			fe_idx, ts_port, ts_demux);
 		ts_port = ts_demux;
 	}
@@ -170,12 +176,12 @@ static int aml_dvb_get_ts_source(struct aml_dvb *dvb, struct device_node *np,
  * @ts_demux: which demux
  * @ts_port: which physical TS port
  */
-static void aml_dvb_apply_ts_source(struct aml_dvb *dvb, u32 ts_demux, u32 ts_port)
+static void aml_dvb_apply_ts_source(struct aml_dvb *dvb, u32 ts_demux,
+				    u32 ts_port)
 {
 	aml_dmx_set_source(&dvb->demux[ts_demux],
 			   AML_TS_SRC_FRONTEND_TS0 + ts_port);
-	dev_info(dvb->dev,
-		 "Demux %d <- tsin_%c (AML_TS_SRC_FRONTEND_TS%d)\n",
+	dev_info(dvb->dev, "Demux %d <- tsin_%c (AML_TS_SRC_FRONTEND_TS%d)\n",
 		 ts_demux, 'a' + ts_port, ts_port);
 }
 
@@ -192,8 +198,8 @@ static void aml_dvb_apply_ts_source(struct aml_dvb *dvb, u32 ts_demux, u32 ts_po
  *  other      - error
  */
 int aml_dvb_register_frontend(struct device_node *fe_node,
-			       struct dvb_frontend *fe,
-			       struct i2c_client *client)
+			      struct dvb_frontend *fe,
+			      struct i2c_client *client)
 {
 	struct aml_dvb *dvb;
 	int fe_idx = -1;
@@ -250,12 +256,15 @@ int aml_dvb_register_frontend(struct device_node *fe_node,
 
 	/* Async FIFO source configuration (if available) */
 	if (ts_demux < dvb->caps.num_asyncfifo) {
-		ret = aml_asyncfifo_set_source(&dvb->asyncfifo[ts_demux], ts_demux);
+		ret = aml_asyncfifo_set_source(&dvb->asyncfifo[ts_demux],
+					       ts_demux);
 		if (ret)
-			dev_warn(dvb->dev, "Failed to set async FIFO %d source: %d\n",
+			dev_warn(dvb->dev,
+				 "Failed to set async FIFO %d source: %d\n",
 				 ts_demux, ret);
 		else
-			dev_info(dvb->dev, "Async FIFO %d source set to demux %d\n",
+			dev_info(dvb->dev,
+				 "Async FIFO %d source set to demux %d\n",
 				 ts_demux, ts_demux);
 	} else {
 		dev_dbg(dvb->dev, "No async FIFO for demux %d\n", ts_demux);
@@ -267,7 +276,8 @@ int aml_dvb_register_frontend(struct device_node *fe_node,
 		dev_info(dvb->dev, "TS rate set to 54 Mbps\n");
 	}
 
-	dev_info(dvb->dev, "Frontend %d registered (demod-initiated)\n", fe_idx);
+	dev_info(dvb->dev, "Frontend %d registered (demod-initiated)\n",
+		 fe_idx);
 	ret = 0;
 
 out_unregister:
@@ -296,7 +306,7 @@ void aml_dvb_unregister_frontend(struct device_node *fe_node)
 		return;
 
 	if (!dvb->frontend[fe_idx])
-		return;	/* already removed */
+		return; /* already removed */
 
 	/* Runtime PM: it is good to stay awake during removal too */
 	pm_runtime_get_sync(dvb->dev);

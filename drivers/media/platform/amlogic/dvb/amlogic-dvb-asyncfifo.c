@@ -19,16 +19,16 @@
 
 static inline u32 ring_avail(struct aml_asyncfifo *afifo)
 {
-    u32 head = smp_load_acquire(&afifo->head);
-    u32 tail = READ_ONCE(afifo->tail);
-    return (head - tail) & RING_MASK(afifo);
+	u32 head = smp_load_acquire(&afifo->head);
+	u32 tail = READ_ONCE(afifo->tail);
+	return (head - tail) & RING_MASK(afifo);
 }
 
 static inline void ring_consume(struct aml_asyncfifo *afifo, u32 chunks)
 {
-    u32 new_tail = (READ_ONCE(afifo->tail) + chunks) & RING_MASK(afifo);
-    /* smp_store_release: tail update becomes visible after DMA reads */
-    smp_store_release(&afifo->tail, new_tail);
+	u32 new_tail = (READ_ONCE(afifo->tail) + chunks) & RING_MASK(afifo);
+	/* smp_store_release: tail update becomes visible after DMA reads */
+	smp_store_release(&afifo->tail, new_tail);
 }
 
 static void aml_asyncfifo_update_irq_threshold(struct aml_asyncfifo *afifo)
@@ -60,7 +60,8 @@ static void aml_asyncfifo_update_irq_threshold(struct aml_asyncfifo *afifo)
 		 * Specified as a 128-byte block count.
 		 */
 		thresh_val = min_t(u32, new_thresh >> 7, 0xFFFF);
-		thresh_val |= AFIFO_IRQ_EN;   /* BIT21: IRQ arm must be preserved */
+		thresh_val |=
+			AFIFO_IRQ_EN; /* BIT21: IRQ arm must be preserved */
 		aml_write_async(dvb, ASYNC_FIFO_REG3(afifo->id), thresh_val);
 
 		dev_dbg(dvb->dev, "afifo%d: irq_threshold=%u thresh_val=0x%x\n",
@@ -70,47 +71,51 @@ static void aml_asyncfifo_update_irq_threshold(struct aml_asyncfifo *afifo)
 
 static void aml_asyncfifo_poll_work(struct work_struct *work)
 {
-    struct aml_asyncfifo *afifo = container_of(work, struct aml_asyncfifo,
-                           poll_work);
-    struct aml_dvb *dvb = afifo->dvb;
-    struct aml_dmx *dmx;
-    u32 budget = afifo->poll_budget;
-    int work_done = 0;
-    u32 avail, tail;
-    void *buf;
-    size_t len;
+	struct aml_asyncfifo *afifo =
+		container_of(work, struct aml_asyncfifo, poll_work);
+	struct aml_dvb *dvb = afifo->dvb;
+	struct aml_dmx *dmx;
+	u32 budget = afifo->poll_budget;
+	int work_done = 0;
+	u32 avail, tail;
+	void *buf;
+	size_t len;
 
-    if (unlikely(!afifo->enabled))
-        goto out;
+	if (unlikely(!afifo->enabled))
+		goto out;
 
-    dev_dbg(dvb->dev, "afifo%d: poll_work starting head=%u tail=%u avail=%u\n",
-             afifo->id, READ_ONCE(afifo->head), afifo->tail, ring_avail(afifo));
+	dev_dbg(dvb->dev,
+		"afifo%d: poll_work starting head=%u tail=%u avail=%u\n",
+		afifo->id, READ_ONCE(afifo->head), afifo->tail,
+		ring_avail(afifo));
 
-    while (budget--) {
-        avail = ring_avail(afifo);
-        if (avail == 0)
-            break;
+	while (budget--) {
+		avail = ring_avail(afifo);
+		if (avail == 0)
+			break;
 
-        tail = READ_ONCE(afifo->tail);
-        buf = afifo->buf_virt + tail * afifo->flush_size;
-        len = afifo->flush_size;
+		tail = READ_ONCE(afifo->tail);
+		buf = afifo->buf_virt + tail * afifo->flush_size;
+		len = afifo->flush_size;
 
-        prefetch(buf);
-        prefetch(buf + 64);
-        prefetch(buf + 128);
-        prefetch(buf + 192);
+		prefetch(buf);
+		prefetch(buf + 64);
+		prefetch(buf + 128);
+		prefetch(buf + 192);
 
-        dma_rmb();
+		dma_rmb();
 
-        if (unlikely(afifo->source >= dvb->caps.num_demux)) {
-            dev_err(dvb->dev, "afifo%d: invalid source %d, dropping chunk\n", afifo->id, afifo->source);
-            trace_aml_dvb_dma_starvation(afifo->source);
-            ring_consume(afifo, 1);
-            continue;
-        }
-        dmx = &dvb->demux[afifo->source];
+		if (unlikely(afifo->source >= dvb->caps.num_demux)) {
+			dev_err(dvb->dev,
+				"afifo%d: invalid source %d, dropping chunk\n",
+				afifo->id, afifo->source);
+			trace_aml_dvb_dma_starvation(afifo->source);
+			ring_consume(afifo, 1);
+			continue;
+		}
+		dmx = &dvb->demux[afifo->source];
 
-        /*
+		/*
          * V2.60: DVR path — vendor dvr_process_channel logic.
          *
          * HW section filter (SEC_BUFF_READY IRQ) and DVR recorder path
@@ -121,50 +126,54 @@ static void aml_asyncfifo_poll_work(struct work_struct *work)
          * If DVR feed exists, deliver directly via cb.ts().
          * If no DVR feed (section feed only): skip the chunk.
          */
-        /*
+		/*
          * V2.60: Dual path support
          *   sf_mode=true  → dvb_dmx_swfilter() (SW section/PES filter)
          *   sf_mode=false → cb.ts() (DVR recorder, raw TS)
          */
-        if (dmx->sf_mode) {
-            /* SW filter path — send all raw TS to sw filter */
-            dvb_dmx_swfilter(&dmx->demux, buf, len);
-            dev_dbg(dvb->dev, "afifo%d: SW filter chunk=%zu\n",
-                    afifo->id, len);
-        } else {
-            /* DVR path — deliver via cb.ts() */
-            int i;
-            bool delivered = false;
-            for (i = 0; i < AML_CHANNEL_COUNT; i++) {
-                if (dmx->channel[i].used && dmx->channel[i].dvr_feed) {
-                    struct dvb_demux_feed *dvr = dmx->channel[i].dvr_feed;
-                    if (dvr->cb.ts)
-                        dvr->cb.ts(buf, len, NULL, 0,
-                                   &dvr->feed.ts, 0);
-                    delivered = true;
-                    break;
-                }
-            }
-            if (!delivered)
-                dev_dbg(dvb->dev, "afifo%d: no DVR feed, chunk skipped\n",
-                        afifo->id);
-        }
+		if (dmx->sf_mode) {
+			/* SW filter path — send all raw TS to sw filter */
+			dvb_dmx_swfilter(&dmx->demux, buf, len);
+			dev_dbg(dvb->dev, "afifo%d: SW filter chunk=%zu\n",
+				afifo->id, len);
+		} else {
+			/* DVR path — deliver via cb.ts() */
+			int i;
+			bool delivered = false;
+			for (i = 0; i < AML_CHANNEL_COUNT; i++) {
+				if (dmx->channel[i].used &&
+				    dmx->channel[i].dvr_feed) {
+					struct dvb_demux_feed *dvr =
+						dmx->channel[i].dvr_feed;
+					if (dvr->cb.ts)
+						dvr->cb.ts(buf, len, NULL, 0,
+							   &dvr->feed.ts, 0);
+					delivered = true;
+					break;
+				}
+			}
+			if (!delivered)
+				dev_dbg(dvb->dev,
+					"afifo%d: no DVR feed, chunk skipped\n",
+					afifo->id);
+		}
 
-        ring_consume(afifo, 1);
-        work_done++;
-    }
+		ring_consume(afifo, 1);
+		work_done++;
+	}
 
-    dev_dbg(dvb->dev, "afifo%d: poll_work done: %d chunks processed\n", afifo->id, work_done);
+	dev_dbg(dvb->dev, "afifo%d: poll_work done: %d chunks processed\n",
+		afifo->id, work_done);
 
-    if (work_done >= afifo->poll_budget / 2)
-        afifo->poll_budget = min(afifo->poll_budget * 2, 1024U);
-    else if (work_done == 0)
-        afifo->poll_budget = max(afifo->poll_budget / 2, 64U);
+	if (work_done >= afifo->poll_budget / 2)
+		afifo->poll_budget = min(afifo->poll_budget * 2, 1024U);
+	else if (work_done == 0)
+		afifo->poll_budget = max(afifo->poll_budget / 2, 64U);
 
-    aml_asyncfifo_update_irq_threshold(afifo);
+	aml_asyncfifo_update_irq_threshold(afifo);
 
 out:
-    /*
+	/*
      * Race condition fix:
      * atomic_set(&pending, 0) MUST be done FIRST, ring_avail check AFTER.
      *
@@ -180,32 +189,32 @@ out:
      *   If IRQ arrives between 1 and 2 → pending becomes 1 → condition
      *   is not met but work has already been queued by the IRQ. Safe.
      */
-    atomic_set(&afifo->pending, 0);
-    smp_mb();   /* memory barrier: pending=0 store becomes visible before ring_avail read */
+	atomic_set(&afifo->pending, 0);
+	smp_mb(); /* memory barrier: pending=0 store becomes visible before ring_avail read */
 
-    if (ring_avail(afifo) > 0 && !atomic_xchg(&afifo->pending, 1))
-        queue_work_on(afifo->cpu, system_highpri_wq,
-                  &afifo->poll_work);
+	if (ring_avail(afifo) > 0 && !atomic_xchg(&afifo->pending, 1))
+		queue_work_on(afifo->cpu, system_highpri_wq, &afifo->poll_work);
 }
 
 void aml_asyncfifo_check_backpressure(struct aml_dvb *dvb)
 {
-    bool throttle = false;
-    int i;
+	bool throttle = false;
+	int i;
 
-    for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
-        struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
-        if (!afifo->enabled)
-            continue;
-        if (ring_avail(afifo) >= afifo->ring_entries * 3 / 4) {
-            throttle = true;
-            dev_dbg(dvb->dev, "backpressure: afifo%d fill high, throttling\n", i);
-            break;
-        }
-    }
+	for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
+		struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
+		if (!afifo->enabled)
+			continue;
+		if (ring_avail(afifo) >= afifo->ring_entries * 3 / 4) {
+			throttle = true;
+			dev_dbg(dvb->dev,
+				"backpressure: afifo%d fill high, throttling\n",
+				i);
+			break;
+		}
+	}
 
-    aml_update_bits(dvb, TS_TOP_CONFIG, BIT(0),
-            throttle ? 0 : BIT(0));
+	aml_update_bits(dvb, TS_TOP_CONFIG, BIT(0), throttle ? 0 : BIT(0));
 }
 EXPORT_SYMBOL_GPL(aml_asyncfifo_check_backpressure);
 
@@ -213,7 +222,8 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 {
 	int i, ret;
 
-	dev_info(dvb->dev, "asyncfifo_init: starting, num=%d\n", dvb->caps.num_asyncfifo);
+	dev_info(dvb->dev, "asyncfifo_init: starting, num=%d\n",
+		 dvb->caps.num_asyncfifo);
 
 	for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
 		struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
@@ -221,22 +231,24 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 
 		dev_info(dvb->dev, "asyncfifo_init: initializing FIFO %d\n", i);
 
-		afifo->id     = i;
-		afifo->dvb    = dvb;
-		afifo->buf_size    = AML_ASYNC_BUF_SIZE;
-		afifo->flush_size  = ALIGN(AML_ASYNC_FLUSH_SIZE, SMP_CACHE_BYTES);
-		afifo->enabled     = false;
-		afifo->source      = i;
-		afifo->head        = 0;
-		afifo->tail        = 0;
-		afifo->prev_chunk  = 0;
+		afifo->id = i;
+		afifo->dvb = dvb;
+		afifo->buf_size = AML_ASYNC_BUF_SIZE;
+		afifo->flush_size =
+			ALIGN(AML_ASYNC_FLUSH_SIZE, SMP_CACHE_BYTES);
+		afifo->enabled = false;
+		afifo->source = i;
+		afifo->head = 0;
+		afifo->tail = 0;
+		afifo->prev_chunk = 0;
 		atomic_set(&afifo->pending, 0);
 		afifo->poll_budget = 256;
 		afifo->ring_entries = RING_ENTRIES(afifo);
 
 		if (!is_power_of_2(afifo->ring_entries)) {
-			dev_err(dvb->dev, "FIFO %d: ring_entries=%u not power of 2\n",
-				i, afifo->ring_entries);
+			dev_err(dvb->dev,
+				"FIFO %d: ring_entries=%u not power of 2\n", i,
+				afifo->ring_entries);
 			ret = -EINVAL;
 			goto err_free_buf;
 		}
@@ -244,28 +256,28 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 		afifo->irq_threshold_min = AML_ASYNC_FLUSH_SIZE;
 		/* threshold_max must not exceed half the ring size.
 		 * If flush_size * 4 > buf_size/2, IRQ will never fire. */
-		afifo->irq_threshold_max = min_t(size_t,
-						 AML_ASYNC_FLUSH_SIZE * 4,
-						 afifo->buf_size / 2);
-		afifo->irq_threshold     = afifo->irq_threshold_min;
-		afifo->cpu               = i % num_online_cpus();
+		afifo->irq_threshold_max = min_t(
+			size_t, AML_ASYNC_FLUSH_SIZE * 4, afifo->buf_size / 2);
+		afifo->irq_threshold = afifo->irq_threshold_min;
+		afifo->cpu = i % num_online_cpus();
 
 		INIT_WORK(&afifo->poll_work, aml_asyncfifo_poll_work);
 
 		/* Allocate DMA ring buffer */
-		dev_info(dvb->dev, "afifo%d: allocating coherent buffer (%zu bytes)\n",
-			 i, afifo->buf_size);
-		afifo->buf_virt = dma_alloc_coherent(dvb->dev,
-						     afifo->buf_size,
+		dev_info(dvb->dev,
+			 "afifo%d: allocating coherent buffer (%zu bytes)\n", i,
+			 afifo->buf_size);
+		afifo->buf_virt = dma_alloc_coherent(dvb->dev, afifo->buf_size,
 						     &afifo->buf_addr,
 						     GFP_KERNEL | GFP_DMA32);
 		if (!afifo->buf_virt) {
-			dev_err(dvb->dev, "afifo%d: dma_alloc_coherent failed\n", i);
+			dev_err(dvb->dev,
+				"afifo%d: dma_alloc_coherent failed\n", i);
 			ret = -ENOMEM;
 			goto err_free_buf;
 		}
-		dev_info(dvb->dev, "afifo%d: dma buffer virt=%p dma=%pad\n",
-			 i, afifo->buf_virt, &afifo->buf_addr);
+		dev_info(dvb->dev, "afifo%d: dma buffer virt=%p dma=%pad\n", i,
+			 afifo->buf_virt, &afifo->buf_addr);
 
 		/*
 		 * Vendor async_fifo_set_regs() order (c_stb_define.h bit definitions):
@@ -294,7 +306,8 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 		/* STEP 1: REG0 — DMA ring buffer start address */
 		ret = aml_write_async(dvb, ASYNC_FIFO_REG0(i), afifo->buf_addr);
 		if (ret) {
-			dev_err(dvb->dev, "afifo%d: REG0 write failed: %d\n", i, ret);
+			dev_err(dvb->dev, "afifo%d: REG0 write failed: %d\n", i,
+				ret);
 			goto err_free_dma;
 		}
 		dev_info(dvb->dev, "afifo%d: REG0 (DMA addr) = 0x%08x\n", i,
@@ -328,8 +341,10 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 
 			ctrl_val = AFIFO_RESET | AFIFO_WRAP_EN | flush_cnt;
 			aml_write_async(dvb, ASYNC_FIFO_REG1(i), ctrl_val);
-			dev_info(dvb->dev, "afifo%d: REG1 reset pulse = 0x%08x (flush_cnt=0x%x)\n",
-				 i, ctrl_val, flush_cnt);
+			dev_info(
+				dvb->dev,
+				"afifo%d: REG1 reset pulse = 0x%08x (flush_cnt=0x%x)\n",
+				i, ctrl_val, flush_cnt);
 
 			/* Clear the RESET bit */
 			ctrl_val &= ~AFIFO_RESET;
@@ -337,14 +352,17 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 
 			/* Set FLUSH_EN — without this, IRQ does not fire */
 			ctrl_val |= AFIFO_FLUSH_EN;
-			ret = aml_write_async(dvb, ASYNC_FIFO_REG1(i), ctrl_val);
+			ret = aml_write_async(dvb, ASYNC_FIFO_REG1(i),
+					      ctrl_val);
 			if (ret) {
-				dev_err(dvb->dev, "afifo%d: REG1 write failed: %d\n",
-					i, ret);
+				dev_err(dvb->dev,
+					"afifo%d: REG1 write failed: %d\n", i,
+					ret);
 				goto err_free_dma;
 			}
-			dev_info(dvb->dev, "afifo%d: REG1 (WRAP+FLUSH) = 0x%08x\n",
-				 i, ctrl_val);
+			dev_info(dvb->dev,
+				 "afifo%d: REG1 (WRAP+FLUSH) = 0x%08x\n", i,
+				 ctrl_val);
 		}
 
 		/* STEP 3: REG2 — no FILL_EN at init, no source either.
@@ -352,7 +370,9 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 		 * If FILL_EN were set here, source=0(dmx0) would be the default →
 		 * asyncfifo0 and asyncfifo1 would be fed from the same source. */
 		aml_write_async(dvb, ASYNC_FIFO_REG2(i), 0);
-		dev_info(dvb->dev, "afifo%d: REG2 (FILL_EN off, no src) = 0x00000000\n", i);
+		dev_info(dvb->dev,
+			 "afifo%d: REG2 (FILL_EN off, no src) = 0x00000000\n",
+			 i);
 
 		/* STEP 4: REG3 — IRQ threshold + AFIFO_IRQ_EN (BIT21)
 		 *
@@ -371,22 +391,26 @@ int aml_asyncfifo_init(struct aml_dvb *dvb)
 			u32 irq_thresh = (afifo->flush_size >> 7) - 1;
 
 			irq_thresh = min_t(u32, irq_thresh, 0x7FFF);
-			irq_thresh |= AFIFO_IRQ_EN;   /* BIT21: IRQ arm — without this, no IRQ! */
+			irq_thresh |=
+				AFIFO_IRQ_EN; /* BIT21: IRQ arm — without this, no IRQ! */
 			aml_write_async(dvb, ASYNC_FIFO_REG3(i), irq_thresh);
-			dev_info(dvb->dev, "afifo%d: REG3 (IRQ thresh) = 0x%06x (every %zuKB)\n",
-				 i, irq_thresh, afifo->flush_size / 1024);
+			dev_info(
+				dvb->dev,
+				"afifo%d: REG3 (IRQ thresh) = 0x%06x (every %zuKB)\n",
+				i, irq_thresh, afifo->flush_size / 1024);
 		}
 
 		afifo->enabled = true;
-		dev_info(dvb->dev,
-			 "Async FIFO %d: base=%pad size=%zu flush=%zu REG1=0x%08x CPU%d\n",
-			 i, &afifo->buf_addr, afifo->buf_size,
-			 afifo->flush_size, ctrl_val, afifo->cpu);
+		dev_info(
+			dvb->dev,
+			"Async FIFO %d: base=%pad size=%zu flush=%zu REG1=0x%08x CPU%d\n",
+			i, &afifo->buf_addr, afifo->buf_size, afifo->flush_size,
+			ctrl_val, afifo->cpu);
 		continue;
 
 err_free_dma:
-		dma_free_coherent(dvb->dev, afifo->buf_size,
-				  afifo->buf_virt, afifo->buf_addr);
+		dma_free_coherent(dvb->dev, afifo->buf_size, afifo->buf_virt,
+				  afifo->buf_addr);
 		afifo->buf_virt = NULL;
 err_free_buf:
 		while (--i >= 0) {
@@ -423,8 +447,8 @@ void aml_asyncfifo_release(struct aml_dvb *dvb)
 		/* Stop the FIFO: clear FLUSH_EN and FILL_EN */
 		aml_write_async(dvb, ASYNC_FIFO_REG1(i), 0);
 		aml_write_async(dvb, ASYNC_FIFO_REG2(i), 0);
-		dma_free_coherent(dvb->dev, afifo->buf_size,
-				  afifo->buf_virt, afifo->buf_addr);
+		dma_free_coherent(dvb->dev, afifo->buf_size, afifo->buf_virt,
+				  afifo->buf_addr);
 		afifo->buf_virt = NULL;
 		afifo->enabled = false;
 	}
@@ -435,7 +459,8 @@ int aml_asyncfifo_set_source(struct aml_asyncfifo *afifo, unsigned int source)
 {
 	struct aml_dvb *dvb = afifo->dvb;
 	/* Vendor reset_async_fifos: DMX0→3, DMX1→2, DMX2→0 */
-	static const u8 src_map[] = { AFIFO_SRC_DMX0, AFIFO_SRC_DMX1, AFIFO_SRC_DMX2 };
+	static const u8 src_map[] = { AFIFO_SRC_DMX0, AFIFO_SRC_DMX1,
+				      AFIFO_SRC_DMX2 };
 	u32 src_val, reg2;
 
 	dev_dbg(dvb->dev, "afifo%d: set_source %u\n", afifo->id, source);
@@ -476,13 +501,13 @@ irqreturn_t aml_asyncfifo_irq_handler(int irq, void *dev_id)
 	 * ring_avail = (head - tail) & RING_MASK — always correct.
 	 */
 	if (aml_read_async(dvb, ASYNC_FIFO_WR_PTR(afifo->id), &wr_ptr) == 0) {
-		u32 ring_mask  = afifo->ring_entries - 1;
-		u32 base_addr  = (u32)afifo->buf_addr;
-		u32 ring_size  = (u32)afifo->buf_size;
-		u32 offset     = (wr_ptr - base_addr) & (ring_size - 1);
-		u32 abs_chunk  = offset / (u32)afifo->flush_size;
-		u32 prev_abs   = READ_ONCE(afifo->prev_chunk);
-		u32 delta      = (abs_chunk - prev_abs) & ring_mask;
+		u32 ring_mask = afifo->ring_entries - 1;
+		u32 base_addr = (u32)afifo->buf_addr;
+		u32 ring_size = (u32)afifo->buf_size;
+		u32 offset = (wr_ptr - base_addr) & (ring_size - 1);
+		u32 abs_chunk = offset / (u32)afifo->flush_size;
+		u32 prev_abs = READ_ONCE(afifo->prev_chunk);
+		u32 delta = (abs_chunk - prev_abs) & ring_mask;
 
 		/* Guarantee at least 1 new chunk */
 		if (delta == 0)
@@ -499,8 +524,7 @@ irqreturn_t aml_asyncfifo_irq_handler(int irq, void *dev_id)
 	aml_asyncfifo_check_backpressure(dvb);
 
 	if (!atomic_xchg(&afifo->pending, 1))
-		queue_work_on(afifo->cpu, system_highpri_wq,
-			      &afifo->poll_work);
+		queue_work_on(afifo->cpu, system_highpri_wq, &afifo->poll_work);
 
 	return IRQ_HANDLED;
 }
@@ -508,42 +532,42 @@ EXPORT_SYMBOL_GPL(aml_asyncfifo_irq_handler);
 
 bool aml_asyncfifo_has_data(struct aml_dvb *dvb)
 {
-    int i;
-    for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
-        struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
-        if (READ_ONCE(afifo->head) != READ_ONCE(afifo->tail))
-            return true;
-    }
-    return false;
+	int i;
+	for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
+		struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
+		if (READ_ONCE(afifo->head) != READ_ONCE(afifo->tail))
+			return true;
+	}
+	return false;
 }
 EXPORT_SYMBOL_GPL(aml_asyncfifo_has_data);
 
 void aml_asyncfifo_process_all(struct aml_dvb *dvb)
 {
-    int i;
-    for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
-        struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
-        if (afifo->enabled && !atomic_xchg(&afifo->pending, 1))
-            queue_work_on(afifo->cpu, system_highpri_wq,
-                      &afifo->poll_work);
-    }
+	int i;
+	for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
+		struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
+		if (afifo->enabled && !atomic_xchg(&afifo->pending, 1))
+			queue_work_on(afifo->cpu, system_highpri_wq,
+				      &afifo->poll_work);
+	}
 }
 EXPORT_SYMBOL_GPL(aml_asyncfifo_process_all);
 
 u32 aml_get_ring_fill_percent(struct aml_dvb *dvb)
 {
-    u32 max_fill = 0;
-    int i;
+	u32 max_fill = 0;
+	int i;
 
-    for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
-        struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
-        if (!afifo->enabled)
-            continue;
-        u32 fill = ring_avail(afifo);
-        u32 percent = fill * 100 / afifo->ring_entries;
-        if (percent > max_fill)
-            max_fill = percent;
-    }
-    return max_fill;
+	for (i = 0; i < dvb->caps.num_asyncfifo; i++) {
+		struct aml_asyncfifo *afifo = &dvb->asyncfifo[i];
+		if (!afifo->enabled)
+			continue;
+		u32 fill = ring_avail(afifo);
+		u32 percent = fill * 100 / afifo->ring_entries;
+		if (percent > max_fill)
+			max_fill = percent;
+	}
+	return max_fill;
 }
 EXPORT_SYMBOL_GPL(aml_get_ring_fill_percent);

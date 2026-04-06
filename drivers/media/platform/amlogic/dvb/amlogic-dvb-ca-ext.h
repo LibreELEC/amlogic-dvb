@@ -31,17 +31,13 @@ enum ca_cw_type {
 	CA_CW_TYPE_MAX
 };
 
-enum ca_dsc_mode {
-	CA_DSC_CBC = 1,
-	CA_DSC_ECB,
-	CA_DSC_IDSA
-};
+enum ca_dsc_mode { CA_DSC_CBC = 1, CA_DSC_ECB, CA_DSC_IDSA };
 
 struct ca_descr_ex {
 	unsigned int index;
 	enum ca_cw_type type;
 	enum ca_dsc_mode mode;
-	int          flags;
+	int flags;
 #define CA_CW_FROM_KL 1
 	unsigned char cw[16];
 };
@@ -79,8 +75,8 @@ enum ca_sc2_algo_type {
 
 enum ca_sc2_dsc_type {
 	CA_DSC_COMMON_TYPE,
-	CA_DSC_TSD_TYPE,	/*just support AES descramble.*/
-	CA_DSC_TSE_TYPE		/*just support AES enscramble.*/
+	CA_DSC_TSD_TYPE, /*just support AES descramble.*/
+	CA_DSC_TSE_TYPE /*just support AES enscramble.*/
 };
 
 /**
@@ -158,9 +154,7 @@ struct ca_sc2_algo {
 	enum ca_sc2_algo_type algo;
 };
 
-enum ca_sc2_extend_type {
-	CA_EXTEND_MULTI2_SYSKEY
-};
+enum ca_sc2_extend_type { CA_EXTEND_MULTI2_SYSKEY };
 
 struct ca_multi2_params {
 	unsigned char round;
@@ -201,7 +195,7 @@ struct ca_sc2_descr_ex {
 
 struct ca_pid {
 	unsigned int pid;
-	int index;   /* -1 == disable*/
+	int index; /* -1 == disable*/
 };
 
 /* amlogic define end */

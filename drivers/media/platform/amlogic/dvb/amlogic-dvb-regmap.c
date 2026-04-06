@@ -77,11 +77,12 @@ const struct regmap_config aml_demux_regmap_config = {
  * max_register: last register = FIFO[0]+0x10 = 0x1010
  */
 const struct regmap_config aml_async_regmap_config = {
-	.name        = "asyncfifo",
-	.reg_bits    = 32,
-	.val_bits    = 32,
-	.reg_stride  = 4,
-	.max_register = 0x1FFC,	/* 0x2000 region — FIFO[0] 0x1000..0x1014 inclusive */
-	.cache_type  = REGCACHE_NONE,
-	.fast_io     = true,
+	.name = "asyncfifo",
+	.reg_bits = 32,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.max_register =
+		0x1FFC, /* 0x2000 region — FIFO[0] 0x1000..0x1014 inclusive */
+	.cache_type = REGCACHE_NONE,
+	.fast_io = true,
 };
