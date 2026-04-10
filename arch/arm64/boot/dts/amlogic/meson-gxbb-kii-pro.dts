@@ -199,20 +199,6 @@
 	pinctrl-names = "default";
 };
 
-&pinctrl_periphs {
-	/* tsin_a paralell 8-bit (GPIOY_0..10) */
-	dvb_p_ts0_pins: dvb-p-ts0-pins {
-		mux {
-			groups = "tsin_a_d_valid",
-				 "tsin_a_sop",
-				 "tsin_a_clk",
-				 "tsin_a_d0",
-				 "tsin_a_dp";
-			function = "tsin_a";
-		};
-	};
-};
-
 &uart_A {
 	status = "okay";
 	pinctrl-0 = <&uart_a_pins>, <&uart_a_cts_rts_pins>;
