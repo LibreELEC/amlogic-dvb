@@ -12,3 +12,5 @@ amlogic-dvb-y := \
 	amlogic-dvb-regmap.o    \
 	amlogic-dvb-stats.o     \
 	amlogic-dvb-ts.o
+
+ccflags-y += -I$(src)
