@@ -33,7 +33,7 @@
  *           Kağan Kadioğlu amlogic-dvb V2.68 driver
  */
 
-#include "meson-gxl-s905d-p231.dtsi"
+#include "meson-gxl-s905d-p231.dts"
 
 / {
 	model = "Mecool M8S Plus DVB-S2X";
@@ -142,7 +142,7 @@
  * ts-serial: 0 = parallel mode
  * ================================================================
  */
-&i2c1 {
+&i2c_B {
 	status = "okay";
 	#address-cells = <1>;
 	#size-cells = <0>;
@@ -199,7 +199,7 @@
  * Serial mode uses only clk + sop + valid + d0 (single data line).
  * ================================================================
  */
-&periphs_pinctrl {
+&periphs {
 	/* Parallel TS mode: 8-bit data + CLK + SYNC + VALID */
 	dvb_p_tsin_a_pins: dvb-p-tsin-a {
 		mux {
