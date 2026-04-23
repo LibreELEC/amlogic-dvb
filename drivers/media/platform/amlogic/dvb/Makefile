@@ -14,3 +14,5 @@ amlogic-dvb-y := \
 	amlogic-dvb-ts.o
 
 ccflags-y += -I$(src)
+
+obj-$(CONFIG_DVB_M88RS6060_FE) += m88rs6060-fe.o
