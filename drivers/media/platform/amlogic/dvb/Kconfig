@@ -10,16 +10,3 @@ config DVB_AMLOGIC
 	  hardware PID filtering, section DMA, and DVR recording.
 
           To compile as a module, say M.
-
-config DVB_M88RS6060_FE
-	tristate "Montage M88RS6060 frontend glue for Amlogic DVB"
-	depends on DVB_AMLOGIC && DVB_M88RS6060 && I2C && OF
-	help
-	  Platform glue driver that connects the mainline Montage M88RS6060
-	  DVB-S/S2/S2X demodulator driver to the Amlogic hardware demux
-	  (amlogic-dvb, taki-branch).
-
-	  Supports Mecool M8S Plus DVB-S2X (Amlogic S905D / GXL) and other
-	  boards using M88RS6060 with Amlogic internal TS interface.
-
-	  To compile as a module, say M.
