@@ -99,7 +99,7 @@
 		 * aml_ts_input_init() selects "parallel" by default
 		 * when ts-serial property is absent or 0.
 		 */
-		pinctrl-names = "parallel", "serial";
+		pinctrl-names = "p_ts0", "s_ts0";
 		pinctrl-0 = <&dvb_p_tsin_a_pins>;
 		pinctrl-1 = <&dvb_s_tsin_a_pins>;
 
