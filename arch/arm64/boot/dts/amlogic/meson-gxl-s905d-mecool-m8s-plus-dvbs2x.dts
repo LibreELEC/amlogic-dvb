@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Mecool M8S Plus DVB-S2X — mainline DTS
+ * Compatible with: LibreELEC/amlogic-dvb:taki (amlogic-dvb V2.68+)
+ *
+ * Hardware confirmed on live device:
+ *   SoC:        Amlogic S905D (GXL family, gxl_p231_1g reference)
+ *   Demod+RF:   Montage M88RS6060 (DVB-S/S2/S2X, all-in-one chip)
+ *   I2C bus:    1 (i2c_B, base 0xc11087c0)
+ *   I2C addr:   0x69
+ *   TS mode:    PARALLEL (tsin_a, GPIODV_0..10)
+ *   Reset GPIO: GPIODV_13 (gpio-217), active-low
+ *   Power GPIO: GPIODV_14 (gpio-218), active-high
+ *   LNB sel:    GPIODV_15 (gpio-219), active-high (13V=low, 18V=high)
+ *
+ * Note: Android DTB labels this demod "Avl6211" — this is wrong.
+ *   Actual chip confirmed by dmesg: "RS6060 chip, demod id = e2"
+ *   The AVL6211 naming is a remnant of a failed DVB-T custom ROM port.
+ *
+ * Register map (GXL, STB_CBUS_BASE = 0x1600):
+ *   ts region:         0xffd06000  (TS_IN, S2P, STB_TOP_CONFIG)
+ *   demux region:      0xff638000  (DEMUX core, PID/section filter)
+ *   async-fifo region: 0xffd09000  (AsyncFIFO DMA, 2x 4KB blocks)
+ *
+ * TS routing (STB_TOP_CONFIG):
+ *   tsin_a (parallel) → TS_IN[0] → FEC_SEL=0 → DMX0
+ *   STB_TOP_CONFIG bits[19:18] = 00 (TS0 → Demux0)
+ *   STB_TOP_CONFIG bits[10]    = 0  (TS0 parallel, not serial)
+ *   Final value: 0x00000000 (default/reset = correct for this config)
+ *
+ * Author: port for taki-branch
+ * Based on: mczerski CoreELEC gxl_p231_1g_m8s_dvb-s2x.dts
+ *           Kağan Kadioğlu amlogic-dvb V2.68 driver
+ */
+
+#include "meson-gxl-s905d-p231.dts"
+
+/ {
+	model = "Mecool M8S Plus DVB-S2X";
+	compatible = "mecool,m8s-plus-dvbs2x", "amlogic,s905d",
+		     "amlogic,meson-gxl";
+
+	/* ================================================================
+	 * DVB/TS Demultiplexer
+	 *
+	 * amlogic-dvb-core.c probe reads:
+	 *   reg[0] "ts"         → regmap_ts   (TS_IN, S2P, TOP_CONFIG)
+	 *   reg[1] "demux"      → regmap_demux (DEMUX core)
+	 *   reg[2] "async-fifo" → regmap_async (AsyncFIFO DMA)
+	 *
+	 * GXL IRQs (same as other GXL DVB devices, CoreELEC verified):
+	 *   GIC_SPI 23 → demux0_irq  (section/PES filter)
+	 *   GIC_SPI  5 → demux1_irq
+	 *   GIC_SPI 53 → demux2_irq
+	 *   GIC_SPI 19 → asyncfifo0  (DVR DMA fill)
+	 *   GIC_SPI 25 → asyncfifo1
+	 *
+	 * dvb-frontends: phandle list → aml_dvb_probe_frontends() stores
+	 *   the adapter in global list; m88rs6060_probe() calls
+	 *   aml_dvb_register_frontend() which finds the adapter by
+	 *   matching the fe_node phandle.
+	 * ================================================================ */
+	dvb: dvb@ffd06000 {
+		compatible = "amlogic,gxl-dvb";
+		status = "okay";
+
+		reg = <0x0 0xffd06000 0x0 0x400>,
+		      <0x0 0xff638000 0x0 0x400>,
+		      <0x0 0xffd09000 0x0 0x2000>;
+		reg-names = "ts", "demux", "async-fifo";
+
+		interrupts = <GIC_SPI 23 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI  5 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 53 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 19 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 25 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "demux0", "demux1", "demux2",
+				  "asyncfifo0", "asyncfifo1";
+
+		/*
+		 * GXL clocks (same as CoreELEC gxl_p231 DVB DTS):
+		 *   CLKID_DEMUX      → clk_demux
+		 *   CLKID_ASYNC_FIFO → clk_asyncfifo
+		 *   CLKID_AHB_ARB0   → clk_ahbarb0
+		 *   CLKID_HIU_IFACE  → clk_parser (mapped as "parser_top")
+		 */
+		clocks = <&clkc CLKID_DEMUX>,
+			 <&clkc CLKID_ASYNC_FIFO>,
+			 <&clkc CLKID_AHB_ARB0>,
+			 <&clkc CLKID_HIU_IFACE>;
+		clock-names = "demux", "asyncfifo", "ahbarb0", "parser_top";
+
+		/*
+		 * Pinctrl:
+		 *   "parallel" state → tsin_a (GPIODV_0..10) muxed as tsin_a
+		 *   "serial"   state → tsin_a serial (data + clk only)
+		 *
+		 * M8S Plus DVB-S2X uses parallel mode (8-bit data bus).
+		 * aml_ts_input_init() selects "parallel" by default
+		 * when ts-serial property is absent or 0.
+		 */
+		pinctrl-names = "p_ts0", "s_ts0";
+		pinctrl-0 = <&dvb_p_tsin_a_pins>;
+		pinctrl-1 = <&dvb_s_tsin_a_pins>;
+
+		/*
+		 * TS input 0 configuration:
+		 *   mode: parallel (tsin_a, 8 data lines)
+		 *   ts0_control: FEC_INPUT_CONTROL[11:0] = 0 (default)
+		 *   ts0_invert:  no clock inversion
+		 *
+		 * aml_ts_input_init() reads these as:
+		 *   ts-serial → 0 (parallel)
+		 *   ts0-control → fec_ctrl = 0
+		 */
+		ts0-control = <0x0>;
+		ts0-invert  = <0x0>;
+
+		/* Frontend reference — M88RS6060 I2C node */
+		dvb-frontends = <&m88rs6060>;
+	};
+};
+
+/*
+ * ================================================================
+ * I2C-B (bus 1): M88RS6060 DVB-S/S2/S2X demodulator + tuner
+ *
+ * Hardware confirmed:
+ *   Physical I2C bus: c11087c0 = i2c1 (I2C-B on GXL)
+ *   Device address: 0x69
+ *
+ * m88rs6060-fe.c probe():
+ *   1. aml_demod_power_reset(&client->dev)  — GPIO power/reset seq
+ *   2. m88rs6060_attach()                   — mainline demod init
+ *   3. aml_dvb_register_frontend(node, fe, client)
+ *        → finds adapter via dvb-frontends phandle matching
+ *        → dvb_register_frontend()
+ *        → aml_asyncfifo_set_source() + aml_dmx_set_source()
+ *
+ * ts-source: which demux to use (0 = DMX0)
+ * ts-port:   which physical TS input (0 = tsin_a = TS_IN[0])
+ * ts-serial: 0 = parallel mode
+ * ================================================================
+ */
+&i2c_B {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	m88rs6060: m88rs6060@69 {
+		compatible = "montage,m88rs6060-fe";
+		reg = <0x69>;
+
+		/* Power enable: GPIODV_14 (gpio-218), active-high
+		 * aml_demod_power_reset() reads "power-gpios" */
+		power-gpios = <&gpio GPIODV_14 GPIO_ACTIVE_HIGH>;
+
+		/* Reset: GPIODV_13 (gpio-217), active-low
+		 * aml_demod_power_reset() reads "reset-gpios" */
+		reset-gpios = <&gpio GPIODV_13 GPIO_ACTIVE_LOW>;
+
+		/* Power sequencing timings (ms) */
+		power-off-delay-ms = <200>;
+		power-on-delay-ms  = <200>;
+		reset-assert-ms    = <20>;
+		reset-release-ms   = <50>;
+
+		/* TS routing: demux 0, physical port tsin_a (port 0) */
+		ts-source = <0>;
+		ts-port   = <0>;
+		ts-serial = <0>;	/* 0 = parallel */
+
+		/*
+		 * LNB voltage select: GPIODV_15 (gpio-219)
+		 *   low  = 13V (vertical / right-circular)
+		 *   high = 18V (horizontal / left-circular)
+		 * m88rs6060-fe.c manages this via set_voltage() callback.
+		 */
+		lnb-voltage-gpios = <&gpio GPIODV_15 GPIO_ACTIVE_HIGH>;
+
+		/* M88RS6060 crystal: 27 MHz internal */
+		clock-frequency = <27000000>;
+	};
+};
+
+/*
+ * ================================================================
+ * Pinctrl: tsin_a parallel and serial mux groups
+ *
+ * GXL pinctrl function names (from meson-gxl pinctrl driver):
+ *   function "tsin_a" covers groups:
+ *     tsin_d0_a_dv0       GPIODV_0  data bit 0
+ *     tsin_d1_7_a_dv1_7   GPIODV_1..7  data bits 1-7
+ *     tsin_clk_a_dv8      GPIODV_8  clock
+ *     tsin_sop_a_dv9      GPIODV_9  sync/start-of-packet
+ *     tsin_d_valid_a_dv10 GPIODV_10 data valid
+ *
+ * Parallel mode uses all 5 groups.
+ * Serial mode uses only clk + sop + valid + d0 (single data line).
+ * ================================================================
+ */
+&periphs {
+	/* Parallel TS mode: 8-bit data + CLK + SYNC + VALID */
+	dvb_p_tsin_a_pins: dvb-p-tsin-a {
+		mux {
+			groups = "tsin_d0_a_dv0",
+				 "tsin_d1_7_a_dv1_7",
+				 "tsin_clk_a_dv8",
+				 "tsin_sop_a_dv9",
+				 "tsin_d_valid_a_dv10";
+			function = "tsin_a";
+			bias-disable;
+		};
+	};
+
+	/* Serial TS mode: single data line + CLK + SYNC + VALID */
+	dvb_s_tsin_a_pins: dvb-s-tsin-a {
+		mux {
+			groups = "tsin_d0_a_dv0",
+				 "tsin_clk_a_dv8",
+				 "tsin_sop_a_dv9",
+				 "tsin_d_valid_a_dv10";
+			function = "tsin_a";
+			bias-disable;
+		};
+	};
+};

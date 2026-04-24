@@ -1,4 +1,5 @@
 obj-$(CONFIG_DVB_AMLOGIC) += amlogic-dvb.o
+obj-$(CONFIG_DVB_AMLOGIC) += m88rs6060-fe.o
 
 amlogic-dvb-y := \
 	amlogic-dvb-asyncfifo.o \
@@ -14,3 +15,5 @@ amlogic-dvb-y := \
 	amlogic-dvb-ts.o
 
 ccflags-y += -I$(src)
+ccflags-y += -I$(srctree)/drivers/media/dvb-frontends
+ccflags-y += -I$(srctree)/drivers/media/dvb-core

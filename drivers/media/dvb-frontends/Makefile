@@ -72,6 +72,7 @@ obj-$(CONFIG_DVB_LNBP21) += lnbp21.o
 obj-$(CONFIG_DVB_LNBP22) += lnbp22.o
 obj-$(CONFIG_DVB_M88DS3103) += m88ds3103.o
 obj-$(CONFIG_DVB_M88RS2000) += m88rs2000.o
+obj-$(CONFIG_DVB_M88RS6060) += m88rs6060.o
 obj-$(CONFIG_DVB_MB86A16) += mb86a16.o
 obj-$(CONFIG_DVB_MB86A20S) += mb86a20s.o
 obj-$(CONFIG_DVB_MN88443X) += mn88443x.o
@@ -136,3 +137,4 @@ obj-$(CONFIG_DVB_ZD1301_DEMOD) += zd1301_demod.o
 obj-$(CONFIG_DVB_ZL10036) += zl10036.o
 obj-$(CONFIG_DVB_ZL10039) += zl10039.o
 obj-$(CONFIG_DVB_ZL10353) += zl10353.o
+
