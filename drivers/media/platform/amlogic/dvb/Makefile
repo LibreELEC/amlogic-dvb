@@ -15,3 +15,4 @@ amlogic-dvb-y := \
 	m88rs6060-fe.o
 
 ccflags-y += -I$(src)
+ccflags-y += -I$(srctree)/drivers/media/dvb-frontends
