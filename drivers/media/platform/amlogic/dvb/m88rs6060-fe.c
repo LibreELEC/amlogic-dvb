@@ -43,14 +43,13 @@
 #include <linux/gpio/consumer.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
-
 #include <media/dvb_frontend.h>
 
 /*
  * m88rs6060_attach() is in drivers/media/dvb-frontends/m88rs6060.c
- * CONFIG_DVB_M88RS6060 must be enabled.
+ * (McMCC driver — m88rs6060_config defined in m88rs6060.h)
  */
-#include <m88rs6060.h>
+#include "m88rs6060.h"
 
 /*
  * amlogic-dvb platform API:
@@ -74,12 +73,15 @@
  * DiSEqC commands go through the demod chip (already in mainline driver).
  * ====================================================================== */
 
+/* Forward declaration — needed for cfg.set_voltage callback */
+static struct m88rs6060_fe_state *g_fe_state; /* single-instance glue */
+
 static int m88rs6060_fe_set_voltage(struct dvb_frontend *fe,
 				    enum fe_sec_voltage voltage)
 {
-	struct m88rs6060_fe_state *state = fe->demodulator_priv;
+	struct m88rs6060_fe_state *state = g_fe_state;
 
-	if (!state->lnb_gpio)
+	if (!state || !state->lnb_gpio)
 		return 0; /* no external GPIO — let demod handle it */
 
 	switch (voltage) {
@@ -158,54 +160,42 @@ static int m88rs6060_fe_probe(struct i2c_client *client)
 
 	/* ── Step 3: M88RS6060 demodulator init ─────────────────────────
 	 *
-	 * m88rs6060_attach() is the mainline attach function from
-	 * drivers/media/dvb-frontends/m88rs6060.c
+	 * McMCC m88rs6060_config fields (from m88rs6060.h):
+	 *   demod_address  — I2C address of the demod chip
+	 *   ts_mode        — 0: Parallel (8-bit, tsin_a), 1: Serial
+	 *   pin_ctrl       — 0: LNB voltage via cfg.set_voltage callback
+	 *   ci_mode        — 0: no CI
+	 *   tuner_readstops — 0: default
+	 *   set_voltage    — callback for LNB 13V/18V (our GPIO function)
 	 *
-	 * Config:
-	 *   i2c_wr_max  = 33    (M88RS6060 I2C write limit)
-	 *   clock       = 27MHz (internal crystal)
-	 *   clock_out   = disabled (not needed for Amlogic path)
-	 *   ts_mode     = TS_PARALLEL (hardware parallel TS output)
-	 *   ts_clk      = 0 (auto — demod selects appropriate clock)
-	 *
-	 * TS mode note: M88RS6060_TS_PARALLEL means the chip outputs
-	 * 8-bit parallel TS. This is what tsin_a (GPIODV_0..10) expects.
+	 * ts_mode=0 (Parallel) is required for tsin_a on GPIODV_0..10.
 	 * ──────────────────────────────────────────────────────────────── */
-	cfg.i2c_wr_max  = 33;
-	cfg.clock       = 27000000;
-	cfg.clock_out   = M88RS6060_CLOCK_OUT_DISABLED;
-	cfg.ts_mode     = M88RS6060_TS_PARALLEL;
-	cfg.ts_clk      = 0; /* auto */
+	cfg.demod_address  = client->addr;
+	cfg.ts_mode        = 0; /* 0 = Parallel TS */
+	cfg.pin_ctrl       = 0; /* LNB via set_voltage callback, not chip pin */
+	cfg.ci_mode        = 0; /* no CI */
+	cfg.tuner_readstops = 0;
+	memset(cfg.name_ext_fw, 0, sizeof(cfg.name_ext_fw));
 
 	/*
-	 * m88rs6060_attach() allocates the dvb_frontend internally and
-	 * returns a pointer. The second argument is a dummy fe — the real
-	 * one is returned. Pass NULL to get a freshly allocated fe.
-	 *
-	 * NOTE: m88rs6060_attach() signature in mainline:
-	 *   struct dvb_frontend *m88rs6060_attach(
-	 *       const struct m88rs6060_config *cfg,
-	 *       struct i2c_adapter *i2c);
+	 * LNB voltage: McMCC driver calls cfg.set_voltage() directly.
+	 * We register our GPIO function here; g_fe_state lets the callback
+	 * reach our state (single-instance driver — one chip per board).
 	 */
+	g_fe_state = state;
+	if (state->lnb_gpio)
+		cfg.set_voltage = m88rs6060_fe_set_voltage;
+
 	fe = m88rs6060_attach(&cfg, client->adapter);
 	if (!fe) {
 		dev_err(dev, "m88rs6060-fe: m88rs6060_attach() failed\n");
+		g_fe_state = NULL;
 		return -ENODEV;
 	}
 
 	state->fe = fe;
 
-	/* Store our state in the frontend for voltage control callback */
-	fe->demodulator_priv = state;
-
-	/* ── Step 4: Install LNB voltage hook ───────────────────────────
-	 * Replace the demod's set_voltage with our GPIO version.
-	 * The mainline M88RS6060 driver has its own LNB controller, but
-	 * on this board voltage is controlled externally via GPIO.
-	 * ──────────────────────────────────────────────────────────────── */
-	if (state->lnb_gpio)
-		fe->ops.set_voltage = m88rs6060_fe_set_voltage;
-
+	/* ── Step 4: LNB voltage hook already installed via cfg.set_voltage */
 	dev_info(dev, "m88rs6060-fe: attached — %s\n", fe->ops.info.name);
 
 	/* ── Step 5: Register with Amlogic DVB demux adapter ────────────
@@ -250,13 +240,11 @@ static void m88rs6060_fe_remove(struct i2c_client *client)
 		return;
 
 	if (state->registered) {
-		/*
-		 * aml_dvb_unregister_frontend() is safe to call even if
-		 * the platform device has already been removed.
-		 */
 		aml_dvb_unregister_frontend(client->dev.of_node);
 		state->registered = false;
 	}
+
+	g_fe_state = NULL;
 
 	if (state->fe) {
 		dvb_frontend_detach(state->fe);
