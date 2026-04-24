@@ -50,7 +50,7 @@
  * m88rs6060_attach() is in drivers/media/dvb-frontends/m88rs6060.c
  * CONFIG_DVB_M88RS6060 must be enabled.
  */
-#include <media/dvb-frontends/m88rs6060.h>
+#include <m88rs6060.h>
 
 /*
  * amlogic-dvb platform API:
