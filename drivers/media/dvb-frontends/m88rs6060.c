@@ -26,7 +26,33 @@
 #include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/firmware.h>
-#include <media/dvb_math.h>
+/* dvb_math.h not available in this kernel tree — provide the two functions
+ * we actually use (intlog2, intlog10) as static inline replacements.
+ *
+ * intlog2(x)  returns log2(x) * 2^24  (same fixed-point contract as dvb_math)
+ * intlog10(x) returns log10(x) * 2^24
+ *
+ * These are integer-only, good enough for SNR reporting.
+ */
+#include <linux/math64.h>
+
+static inline u32 m88rs_intlog2(u32 x)
+{
+	u32 r = 0;
+	if (!x)
+		return 0;
+	while (x > 1) { x >>= 1; r++; }
+	return r << 24;
+}
+
+static inline u32 m88rs_intlog10(u32 x)
+{
+	/* log10(x) = log2(x) / log2(10);  log2(10) * 2^24 ≈ 55702182 */
+	return (u32)div_u64((u64)m88rs_intlog2(x) * (1 << 24), 55702182U);
+}
+
+#define intlog2(x)  m88rs_intlog2(x)
+#define intlog10(x) m88rs_intlog10(x)
 #include <linux/mutex.h>
 #include "m88rs6060.h"
 #include "m88rs6060_priv.h"
@@ -1739,10 +1765,10 @@ static struct dvb_frontend_ops m88rs6060_ops = {
 	.delsys	= { SYS_DVBS, SYS_DVBS2 },
 	.info	= {
 		.name			= "Montage RS6060",
-		.frequency_min	=  950000000,
-		.frequency_max	= 2200000000,
-		.frequency_stepsize	= 1020000,
-		.frequency_tolerance = 5000000,
+		.frequency_min_hz	=  950000000,
+		.frequency_max_hz	= 2200000000UL,
+		.frequency_stepsize_hz	= 1020000,
+		.frequency_tolerance_hz	= 5000000,
 		.symbol_rate_min	= 1000000,
 		.symbol_rate_max	= 45000000,
 		.caps = FE_CAN_INVERSION_AUTO |
@@ -1754,8 +1780,8 @@ static struct dvb_frontend_ops m88rs6060_ops = {
 	},
 	.tuner_ops = {
 		.info = {
-			.frequency_min = 950000000,
-			.frequency_max = 2200000000
+			.frequency_min_hz = 950000000,
+			.frequency_max_hz = 2200000000UL
 		},
 	},
 

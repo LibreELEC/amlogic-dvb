@@ -24,7 +24,7 @@
 #define M88RS6060_H
 
 #include <linux/dvb/frontend.h>
-#include <dvb_frontend.h>
+#include <media/dvb_frontend.h>
 
 struct m88rs6060_config {
 	u8 demod_address; /* the demodulator's i2c address */
