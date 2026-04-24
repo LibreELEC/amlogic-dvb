@@ -11,8 +11,7 @@ amlogic-dvb-y := \
 	amlogic-dvb-pts.o       \
 	amlogic-dvb-regmap.o    \
 	amlogic-dvb-stats.o     \
-	amlogic-dvb-ts.o
+	amlogic-dvb-ts.o	\
+	m88rs6060-fe.o
 
 ccflags-y += -I$(src)
-
-obj-$(CONFIG_DVB_M88RS6060_FE) += m88rs6060-fe.o
