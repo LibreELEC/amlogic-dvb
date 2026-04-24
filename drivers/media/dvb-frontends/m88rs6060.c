@@ -26,7 +26,7 @@
 #include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/firmware.h>
-#include <dvb_math.h>
+#include <media/dvb_math.h>
 #include <linux/mutex.h>
 #include "m88rs6060.h"
 #include "m88rs6060_priv.h"
